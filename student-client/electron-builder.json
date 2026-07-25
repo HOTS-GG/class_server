@@ -1,0 +1,23 @@
+{
+  "appId": "kr.classserver.student",
+  "productName": "ClassServer-Student",
+  "extraMetadata": {
+    "name": "class-server-student",
+    "main": "student-client/src/main.js"
+  },
+  "directories": {
+    "output": "release/student"
+  },
+  "files": [
+    "package.json",
+    "student-client/src/**/*",
+    "shared/**/*",
+    "!**/node_modules/.cache/**"
+  ],
+  "win": {
+    "target": ["portable"]
+  },
+  "portable": {
+    "artifactName": "ClassServer-학생용-${version}.exe"
+  }
+}

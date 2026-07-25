@@ -1,0 +1,13 @@
+{
+  "name": "@class-server/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./shuffle": "./src/shuffle.js",
+    "./grading": "./src/grading.js",
+    "./csv": "./src/csv.js",
+    "./constants": "./src/constants.js",
+    "./id": "./src/id.js"
+  }
+}

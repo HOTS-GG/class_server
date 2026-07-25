@@ -1,0 +1,11 @@
+{
+  "name": "@class-server/teacher-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.js",
+  "dependencies": {
+    "@class-server/server": "*",
+    "@class-server/shared": "*"
+  }
+}

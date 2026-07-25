@@ -1,0 +1,27 @@
+{
+  "appId": "kr.classserver.teacher",
+  "productName": "ClassServer-Teacher",
+  "extraMetadata": {
+    "name": "class-server-teacher",
+    "main": "teacher-app/src/main.js"
+  },
+  "directories": {
+    "output": "release/teacher"
+  },
+  "files": [
+    "package.json",
+    "teacher-app/src/**/*",
+    "server/**/*",
+    "shared/**/*",
+    "!**/node_modules/.cache/**"
+  ],
+  "win": {
+    "target": ["nsis"]
+  },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": false,
+    "artifactName": "ClassServer-교사용-Setup-${version}.exe",
+    "shortcutName": "교실 평가 시스템 (교사용)"
+  }
+}

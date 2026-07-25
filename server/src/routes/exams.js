@@ -1,0 +1,239 @@
+import { Router } from 'express';
+import { toCsv } from '../../../shared/src/csv.js';
+import { newId } from '../../../shared/src/id.js';
+
+// 대시보드 입력을 내부 모델로 정규화. 문항/선택지에 안정적 id 부여.
+function normalizeQuestions(questions) {
+  if (!Array.isArray(questions) || questions.length === 0) {
+    throw new Error('문항이 최소 1개 필요합니다.');
+  }
+  return questions.map((q, qi) => {
+    const type = q.type === 'essay' ? 'essay' : 'mc';
+    const text = String(q.text ?? '').trim();
+    if (!text) throw new Error(`${qi + 1}번 문항의 내용이 비어 있습니다.`);
+    const points = Number(q.points);
+    if (!Number.isFinite(points) || points < 0) throw new Error(`${qi + 1}번 문항의 배점이 잘못되었습니다.`);
+    const base = { id: q.id ?? newId('q'), type, text, points };
+    if (type === 'essay') return base;
+
+    const choiceTexts = (q.choices ?? []).map((c) => String(typeof c === 'object' ? c.text : c).trim());
+    if (choiceTexts.filter(Boolean).length < 2) throw new Error(`${qi + 1}번 문항의 선택지가 2개 이상 필요합니다.`);
+    const choices = choiceTexts.map((t, ci) => ({ id: `c${ci + 1}`, text: t }));
+    const answerIndex = Number(q.answerIndex);
+    if (!Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex >= choices.length) {
+      throw new Error(`${qi + 1}번 문항의 정답이 지정되지 않았습니다.`);
+    }
+    return { ...base, choices, answerChoiceId: choices[answerIndex].id };
+  });
+}
+
+export function examRouters({ db, presence, examService }) {
+  // ── 교사용 ─────────────────────────────
+  const teacher = Router();
+
+  teacher.get('/', (req, res) => {
+    res.json(db.data.exams.map((e) => ({
+      id: e.id, title: e.title, status: e.status,
+      questionCount: e.questions.length,
+      totalPoints: e.questions.reduce((s, q) => s + q.points, 0),
+      shuffleQuestions: e.shuffleQuestions, shuffleChoices: e.shuffleChoices,
+      durationMin: e.durationMin ?? null,
+      durationSec: e.durationSec ?? null, startedAt: e.startedAt ?? null,
+      endsAt: e.endsAt ?? null, createdAt: e.createdAt,
+    })));
+  });
+
+  teacher.get('/:id', (req, res) => {
+    const e = examService.findExam(req.params.id);
+    if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+    res.json(e);
+  });
+
+  teacher.post('/', (req, res) => {
+    try {
+      const { title, shuffleQuestions, shuffleChoices, questions, durationMin } = req.body ?? {};
+      if (!title?.trim()) return res.status(400).json({ error: '시험 제목이 필요합니다.' });
+      const exam = {
+        id: newId('ex'),
+        title: title.trim(),
+        status: 'draft',
+        shuffleQuestions: shuffleQuestions !== false,
+        shuffleChoices: shuffleChoices !== false,
+        durationMin: Number(durationMin) || 30,
+        questions: normalizeQuestions(questions),
+        createdAt: Date.now(),
+      };
+      db.data.exams.push(exam);
+      db.scheduleFlush();
+      res.json(exam);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  teacher.put('/:id', (req, res) => {
+    try {
+      const e = examService.findExam(req.params.id);
+      if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+      if (e.status !== 'draft') return res.status(400).json({ error: '시작 전(초안) 시험만 수정할 수 있습니다.' });
+      const { title, shuffleQuestions, shuffleChoices, questions, durationMin } = req.body ?? {};
+      if (title?.trim()) e.title = title.trim();
+      if (shuffleQuestions !== undefined) e.shuffleQuestions = !!shuffleQuestions;
+      if (shuffleChoices !== undefined) e.shuffleChoices = !!shuffleChoices;
+      if (durationMin !== undefined) e.durationMin = Number(durationMin) || e.durationMin;
+      if (questions) e.questions = normalizeQuestions(questions);
+      db.scheduleFlush();
+      res.json(e);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  teacher.delete('/:id', (req, res) => {
+    const idx = db.data.exams.findIndex((e) => e.id === req.params.id);
+    if (idx < 0) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+    if (db.data.exams[idx].status === 'active') return res.status(400).json({ error: '진행 중인 시험은 삭제할 수 없습니다.' });
+    db.data.exams.splice(idx, 1);
+    db.scheduleFlush();
+    res.json({ ok: true });
+  });
+
+  teacher.post('/:id/start', (req, res) => {
+    try {
+      const e = examService.findExam(req.params.id);
+      if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+      if (e.status === 'ended') return res.status(400).json({ error: '이미 종료된 시험입니다.' });
+      const durationMin = Number(req.body?.durationMin) || e.durationMin || 30;
+      examService.startExam(e, Math.round(durationMin * 60));
+      presence.resetFocusStats();
+      db.scheduleFlush();
+      res.json({ ok: true, endsAt: e.endsAt });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  teacher.post('/:id/stop', (req, res) => {
+    const e = examService.findExam(req.params.id);
+    if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+    examService.endExam(e, 'teacher');
+    res.json({ ok: true });
+  });
+
+  teacher.get('/:id/monitor', (req, res) => {
+    const e = examService.findExam(req.params.id);
+    if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+    const rows = db.data.students
+      .filter((s) => s.active)
+      .sort((a, b) => a.number - b.number)
+      .map((s) => {
+        const att = examService.attemptOf(e.id, s.id);
+        return {
+          studentId: s.id,
+          attemptId: att?.id ?? null,
+          number: s.number,
+          name: s.name,
+          presence: presence.snapshot(s.id),
+          answeredCount: att ? examService.countAnswered(e, att) : 0,
+          questionCount: e.questions.length,
+          submitted: !!att?.submittedAt,
+          submitType: att?.submitType ?? null,
+          submittedAt: att?.submittedAt ?? null,
+          score: att?.score ?? null,
+          scoreDetail: att?.scoreDetail ?? null,
+        };
+      });
+    res.json({
+      exam: { id: e.id, title: e.title, status: e.status, endsAt: e.endsAt ?? null, durationSec: e.durationSec ?? null },
+      serverNow: Date.now(),
+      rows,
+    });
+  });
+
+  // 서술형 답안 열람 + 수동 채점용
+  teacher.get('/:id/attempts/:attemptId', (req, res) => {
+    const e = examService.findExam(req.params.id);
+    const att = db.data.attempts.find((a) => a.id === req.params.attemptId && a.examId === req.params.id);
+    if (!e || !att) return res.status(404).json({ error: '응시 기록을 찾을 수 없습니다.' });
+    const stu = db.data.students.find((s) => s.id === att.studentId);
+    res.json({ exam: e, attempt: att, student: stu ? { number: stu.number, name: stu.name } : null });
+  });
+
+  teacher.post('/:id/attempts/:attemptId/grade', (req, res) => {
+    const e = examService.findExam(req.params.id);
+    const att = db.data.attempts.find((a) => a.id === req.params.attemptId && a.examId === req.params.id);
+    if (!e || !att) return res.status(404).json({ error: '응시 기록을 찾을 수 없습니다.' });
+    const grades = req.body?.manualGrades ?? {};
+    for (const [qid, val] of Object.entries(grades)) {
+      const q = e.questions.find((x) => x.id === qid && x.type === 'essay');
+      if (!q) continue;
+      const n = Number(val);
+      att.manualGrades[qid] = Number.isFinite(n) ? n : 0;
+    }
+    const detail = examService.regrade(e, att);
+    db.scheduleFlush();
+    res.json({ ok: true, score: att.score, scoreDetail: detail });
+  });
+
+  teacher.get('/:id/results.csv', (req, res) => {
+    const e = examService.findExam(req.params.id);
+    if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+    const header = [
+      '출석번호', '이름', '응시', '제출시각', '제출유형', '이탈횟수', '이탈시간(초)',
+      '객관식점수', '서술형점수', '총점', '만점',
+      ...e.questions.map((q, i) => `Q${i + 1}(${q.points}점)`),
+    ];
+    const typeLabel = { manual: '직접제출', auto: '시간종료', teacher: '교사종료' };
+    const rows = [header];
+    for (const s of db.data.students.filter((x) => x.active).sort((a, b) => a.number - b.number)) {
+      const att = examService.attemptOf(e.id, s.id);
+      const p = presence.snapshot(s.id);
+      const d = att?.scoreDetail;
+      rows.push([
+        s.number, s.name,
+        att?.submittedAt ? '제출' : (att ? '미제출' : '미응시'),
+        att?.submittedAt ? new Date(att.submittedAt).toLocaleString('ko-KR') : '',
+        typeLabel[att?.submitType] ?? '',
+        p.awayCount, Math.round(p.awayMs / 1000),
+        d?.mcScore ?? '', d?.essayScore ?? '', d?.total ?? '', d?.maxTotal ?? '',
+        ...e.questions.map((q) => d?.perQuestion?.[q.id] ?? ''),
+      ]);
+    }
+    res.set('Content-Type', 'text/csv; charset=utf-8');
+    res.set('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(`결과_${e.title}.csv`));
+    res.send(toCsv(rows));
+  });
+
+  // ── 학생용 ─────────────────────────────
+  const student = Router();
+
+  student.get('/active', (req, res) => {
+    const active = examService.activeExamFor(req.student.id);
+    if (!active) return res.json({ exam: null });
+    res.json(examService.buildStudentPayload(active.exam, active.attempt));
+  });
+
+  // 소켓이 끊겼을 때의 HTTP 폴백
+  student.post('/:id/answer', (req, res) => {
+    try {
+      const e = examService.findExam(req.params.id);
+      const { questionId, answer } = req.body ?? {};
+      const { savedAt } = examService.saveAnswer(e, req.student, questionId, answer);
+      res.json({ ok: true, savedAt });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  student.post('/:id/submit', (req, res) => {
+    try {
+      const e = examService.findExam(req.params.id);
+      const att = examService.submit(e, req.student, 'manual');
+      res.json({ ok: true, submittedAt: att.submittedAt });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  return { teacher, student };
+}

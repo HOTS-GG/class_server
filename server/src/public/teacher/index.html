@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>교실 평가 시스템 — 교사</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>교실 평가 시스템</h1>
+  <div id="server-info" class="server-info"></div>
+</header>
+
+<nav id="tabs">
+  <button data-tab="dashboard" class="active">현황판</button>
+  <button data-tab="students">학생 명단</button>
+  <button data-tab="assignments">과제</button>
+  <button data-tab="exams">시험(CBT)</button>
+  <button data-tab="tools">도구</button>
+</nav>
+
+<main>
+  <!-- 현황판 -->
+  <section id="tab-dashboard" class="tab active">
+    <div id="active-exam-banner" class="banner hidden"></div>
+    <h2>학생 접속 현황 <span id="online-count" class="muted"></span></h2>
+    <div id="student-tiles" class="tiles"></div>
+    <h2>실시간 이벤트</h2>
+    <div id="event-feed" class="feed"></div>
+  </section>
+
+  <!-- 학생 명단 -->
+  <section id="tab-students" class="tab">
+    <h2>학생 명단</h2>
+    <div class="toolbar">
+      <input id="stu-number" type="number" placeholder="출석번호" style="width:90px">
+      <input id="stu-name" type="text" placeholder="이름" style="width:120px">
+      <button id="btn-add-student">추가</button>
+      <span class="sep"></span>
+      <input id="csv-file" type="file" accept=".csv,.txt" class="hidden">
+      <button id="btn-import-csv">CSV 불러오기 (번호,이름)</button>
+      <a href="/api/teacher/students/codes.csv" download><button>접속코드표 다운로드</button></a>
+    </div>
+    <table id="students-table">
+      <thead><tr><th>번호</th><th>이름</th><th>접속코드</th><th>상태</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- 과제 -->
+  <section id="tab-assignments" class="tab">
+    <h2>과제 만들기</h2>
+    <div class="card">
+      <input id="asg-title" type="text" placeholder="과제 제목">
+      <textarea id="asg-desc" placeholder="설명 (선택)"></textarea>
+      <div class="toolbar">
+        <input id="asg-files" type="file" multiple>
+        <label><input id="asg-resubmit" type="checkbox" checked> 재제출 허용</label>
+        <button id="btn-create-assignment" class="primary">과제 생성</button>
+      </div>
+    </div>
+    <h2>과제 목록</h2>
+    <div id="assignment-list"></div>
+    <div id="assignment-detail" class="hidden">
+      <h2 id="asg-detail-title"></h2>
+      <div class="toolbar">
+        <button id="btn-asg-back">← 목록으로</button>
+        <a id="asg-zip-link" href="#"><button class="primary">제출물 전체 다운로드 (zip)</button></a>
+      </div>
+      <table id="submissions-table">
+        <thead><tr><th>번호</th><th>이름</th><th>제출</th><th>제출 시각</th><th>파일</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 시험 -->
+  <section id="tab-exams" class="tab">
+    <div id="exam-list-view">
+      <h2>시험 목록</h2>
+      <div class="toolbar">
+        <button id="btn-new-exam" class="primary">새 시험 만들기</button>
+      </div>
+      <div id="exam-list"></div>
+    </div>
+
+    <div id="exam-editor" class="hidden">
+      <h2 id="exam-editor-title">새 시험</h2>
+      <div class="card">
+        <input id="ex-title" type="text" placeholder="시험 제목">
+        <div class="toolbar">
+          <label>기본 시간(분) <input id="ex-duration" type="number" value="30" style="width:70px"></label>
+          <label><input id="ex-shuffle-q" type="checkbox" checked> 문항 순서 섞기</label>
+          <label><input id="ex-shuffle-c" type="checkbox" checked> 선택지 순서 섞기</label>
+        </div>
+      </div>
+      <div id="question-editor"></div>
+      <div class="toolbar">
+        <button id="btn-add-mc">+ 객관식 문항</button>
+        <button id="btn-add-essay">+ 서술형 문항</button>
+        <span class="sep"></span>
+        <button id="btn-save-exam" class="primary">저장</button>
+        <button id="btn-cancel-exam">취소</button>
+      </div>
+    </div>
+
+    <div id="exam-monitor" class="hidden">
+      <h2 id="monitor-title"></h2>
+      <div class="toolbar">
+        <button id="btn-monitor-back">← 목록으로</button>
+        <span id="monitor-timer" class="timer"></span>
+        <button id="btn-stop-exam" class="danger hidden">시험 종료</button>
+        <a id="results-csv-link" href="#"><button>결과 CSV 다운로드</button></a>
+      </div>
+      <table id="monitor-table">
+        <thead><tr><th>번호</th><th>이름</th><th>접속</th><th>진행</th><th>이탈</th><th>제출</th><th>점수</th><th></th></tr></thead>
+      <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 도구 -->
+  <section id="tab-tools" class="tab">
+    <h2>학생 화면 잠금 해제</h2>
+    <div class="card">
+      <p class="muted">시험 중 학생 프로그램은 임의로 종료할 수 없습니다. 특정 학생만 풀어주려면 해제 코드를 발급해 불러주세요.</p>
+      <div class="toolbar">
+        <button id="btn-unlock-code">해제 코드 발급 (10분 유효)</button>
+        <span id="unlock-code-display" class="code-display"></span>
+        <span class="sep"></span>
+        <button id="btn-unlock-all" class="danger">전체 학생 잠금 해제 (수업 종료)</button>
+      </div>
+    </div>
+    <h2>서버 정보</h2>
+    <div class="card"><pre id="tools-server-info"></pre></div>
+  </section>
+</main>
+
+<div id="grade-modal" class="modal hidden">
+  <div class="modal-body">
+    <h2 id="grade-title">서술형 채점</h2>
+    <div id="grade-content"></div>
+    <div class="toolbar">
+      <button id="btn-save-grades" class="primary">채점 저장</button>
+      <button id="btn-close-grades">닫기</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

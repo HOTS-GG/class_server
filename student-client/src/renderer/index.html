@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>수업 클라이언트</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 접속 화면 -->
+<section id="screen-connect" class="screen active">
+  <div class="center-card">
+    <h1>수업 참여하기</h1>
+    <label>선생님 컴퓨터 주소
+      <div class="row">
+        <input id="in-server" type="text" placeholder="예: 192.168.0.10">
+        <button id="btn-discover">자동 찾기</button>
+      </div>
+    </label>
+    <label>내 접속 코드
+      <input id="in-code" type="text" placeholder="접속 코드 6자리" maxlength="6" autocapitalize="characters">
+    </label>
+    <button id="btn-join" class="primary big">접속</button>
+    <p id="connect-msg" class="msg"></p>
+  </div>
+</section>
+
+<!-- 홈(과제) 화면 -->
+<section id="screen-home" class="screen">
+  <header>
+    <span id="home-student"></span>
+    <span id="conn-status" class="pill">연결됨</span>
+    <span class="sep"></span>
+    <button id="btn-exit" class="small">종료</button>
+  </header>
+  <div id="exam-notice" class="notice hidden"></div>
+  <h2>과제</h2>
+  <div id="assignment-list"><p class="muted">과제를 불러오는 중...</p></div>
+</section>
+
+<!-- 시험 화면 -->
+<section id="screen-exam" class="screen">
+  <header class="exam-header">
+    <b id="exam-title"></b>
+    <span id="exam-timer" class="timer"></span>
+    <span class="sep"></span>
+    <span id="save-status" class="muted"></span>
+    <button id="btn-submit-exam" class="primary">제출하기</button>
+  </header>
+  <div id="exam-progress" class="progress-nav"></div>
+  <div id="exam-questions"></div>
+  <div class="exam-footer">
+    <button id="btn-submit-exam2" class="primary big">시험 제출하기</button>
+  </div>
+</section>
+
+<!-- 완료/대기 화면 -->
+<section id="screen-done" class="screen">
+  <div class="center-card">
+    <h1 id="done-title"></h1>
+    <p id="done-msg"></p>
+    <button id="btn-done-home" class="primary">확인</button>
+  </div>
+</section>
+
+<!-- 종료(잠금 해제) 모달 -->
+<div id="unlock-modal" class="modal hidden">
+  <div class="modal-body">
+    <h2>프로그램 종료</h2>
+    <p>시험 중에는 종료할 수 없습니다. 선생님께 받은 해제 코드를 입력하세요.</p>
+    <input id="in-unlock" type="text" placeholder="해제 코드" maxlength="4" autocapitalize="characters">
+    <p id="unlock-msg" class="msg"></p>
+    <div class="row">
+      <button id="btn-unlock-ok" class="primary">확인</button>
+      <button id="btn-unlock-cancel">취소</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<script src="app.js"></script>
+</body>
+</html>
