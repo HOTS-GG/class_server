@@ -297,25 +297,35 @@ async function loadExams() {
   };
 }
 
+const Q_TYPE_KO = { mc: '객관식', short: '단답형', essay: '서술형' };
+
 function questionCard(q, idx) {
   const choices = (q.choices ?? []).map((c, ci) => `
     <div class="choice-row">
       <input type="radio" name="ans-${idx}" ${q.answerIndex === ci ? 'checked' : ''} data-q="${idx}" data-c="${ci}" data-role="answer" title="정답">
-      <input type="text" value="${esc(c)}" data-q="${idx}" data-c="${ci}" data-role="choice" placeholder="선택지 ${ci + 1}">
+      <input type="text" value="${esc(c)}" data-q="${idx}" data-c="${ci}" data-role="choice" placeholder="보기 ${ci + 1}">
       <button class="small" data-role="del-choice" data-q="${idx}" data-c="${ci}">✕</button>
     </div>`).join('');
+  const acceptedStr = Array.isArray(q.acceptedAnswers) ? q.acceptedAnswers.join('; ') : (q.acceptedAnswers ?? '');
   return `<div class="q-card">
     <div class="q-head">
       <b>${idx + 1}번</b>
-      <span class="status-pill">${q.type === 'mc' ? '객관식' : '서술형'}</span>
+      <span class="status-pill">${Q_TYPE_KO[q.type]}</span>
       <label>배점 <input type="number" value="${q.points}" style="width:60px" data-q="${idx}" data-role="points"></label>
       <span class="sep"></span>
       <button class="small" data-role="del-q" data-q="${idx}">문항 삭제</button>
     </div>
     <textarea data-q="${idx}" data-role="text" placeholder="문항 내용">${esc(q.text)}</textarea>
     ${q.type === 'mc' ? `${choices}
-      <button class="small" data-role="add-choice" data-q="${idx}">+ 선택지</button>
+      <button class="small" data-role="add-choice" data-q="${idx}">+ 보기</button>
       <div class="muted">왼쪽 라디오 버튼으로 정답을 지정하세요.</div>` : ''}
+    ${q.type === 'short' ? `
+      <div class="choice-row" style="margin-top:8px">
+        <span>인정 답안</span>
+        <input type="text" value="${esc(acceptedStr)}" data-q="${idx}" data-role="accepted"
+          placeholder="예: H2O; 에이치투오  (여러 개면 ; 로 구분)">
+      </div>
+      <div class="muted">공백·대소문자는 무시하고 자동 채점됩니다. 채점 후 감독 화면에서 수동 정정도 가능합니다.</div>` : ''}
   </div>`;
 }
 
@@ -332,6 +342,7 @@ $('#question-editor').addEventListener('input', (e) => {
   if (t.dataset.role === 'text') q.text = t.value;
   else if (t.dataset.role === 'points') q.points = Number(t.value);
   else if (t.dataset.role === 'choice') q.choices[Number(t.dataset.c)] = t.value;
+  else if (t.dataset.role === 'accepted') q.acceptedAnswers = t.value;
 });
 $('#question-editor').addEventListener('change', (e) => {
   const t = e.target;
@@ -357,9 +368,45 @@ $('#btn-add-mc').addEventListener('click', () => {
   editQuestions.push({ type: 'mc', text: '', points: 5, choices: ['', '', '', ''], answerIndex: 0 });
   renderQuestionEditor();
 });
+$('#btn-add-short').addEventListener('click', () => {
+  editQuestions.push({ type: 'short', text: '', points: 5, acceptedAnswers: '' });
+  renderQuestionEditor();
+});
 $('#btn-add-essay').addEventListener('click', () => {
   editQuestions.push({ type: 'essay', text: '', points: 10 });
   renderQuestionEditor();
+});
+
+// ── 엑셀 문제 가져오기 ─────────────────────────────
+$('#btn-import-excel').addEventListener('click', () => $('#excel-file').click());
+$('#excel-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const { questions, errors } = await api('POST', '/api/teacher/exams/import-excel', fd);
+    if (errors?.length) {
+      alert(`엑셀에서 문제를 읽는 중 ${errors.length}건을 건너뛰었습니다:\n\n${errors.join('\n')}`);
+    }
+    if (!questions?.length) { toast('가져올 수 있는 문항이 없습니다.', 'warn'); e.target.value = ''; return; }
+    // 편집기에 채워서 검토 후 저장하도록
+    editingExamId = null;
+    editQuestions = questions.map((q) => ({
+      ...q,
+      acceptedAnswers: Array.isArray(q.acceptedAnswers) ? q.acceptedAnswers.join('; ') : q.acceptedAnswers,
+    }));
+    $('#exam-editor-title').textContent = '엑셀에서 가져온 시험 (검토 후 저장)';
+    $('#ex-title').value = file.name.replace(/\.(xlsx|xls)$/i, '');
+    $('#ex-duration').value = 30;
+    $('#ex-shuffle-q').checked = true;
+    $('#ex-shuffle-c').checked = true;
+    renderQuestionEditor();
+    $('#exam-list-view').classList.add('hidden');
+    $('#exam-editor').classList.remove('hidden');
+    toast(`${questions.length}개 문항을 가져왔습니다. 검토 후 [저장]을 누르세요.`);
+  } catch (err) { toast(err.message, 'warn'); }
+  e.target.value = '';
 });
 
 $('#btn-new-exam').addEventListener('click', () => {
@@ -380,6 +427,7 @@ async function openExamEditor(id) {
     type: q.type, text: q.text, points: q.points,
     choices: q.choices?.map((c) => c.text),
     answerIndex: q.choices?.findIndex((c) => c.id === q.answerChoiceId) ?? 0,
+    acceptedAnswers: q.acceptedAnswers?.join('; '),
   }));
   $('#exam-editor-title').textContent = `시험 수정 — ${exam.title}`;
   $('#ex-title').value = exam.title;
@@ -495,6 +543,7 @@ async function openGradeModal(attemptId) {
   $('#grade-title').textContent = `답안 확인 — ${student?.number}번 ${student?.name}`;
   $('#grade-content').innerHTML = exam.questions.map((q, i) => {
     const a = attempt.answers[q.id];
+    const cur = attempt.manualGrades?.[q.id] ?? '';
     if (q.type === 'mc') {
       const chosen = q.choices.find((c) => c.id === a?.choiceId);
       const correct = a?.choiceId === q.answerChoiceId;
@@ -503,7 +552,18 @@ async function openGradeModal(attemptId) {
         답: ${esc(chosen?.text ?? '무응답')} ${correct ? '⭕' : '❌'}
       </div>`;
     }
-    const cur = attempt.manualGrades?.[q.id] ?? '';
+    if (q.type === 'short') {
+      const earned = attempt.scoreDetail?.perQuestion?.[q.id] ?? 0;
+      return `<div class="q-card">
+        <b>Q${i + 1}. (단답형 ${q.points}점)</b> ${esc(q.text)}
+        <div class="answer-box">${esc(a?.text ?? '(무응답)')}</div>
+        <div>자동 채점: ${earned}점 ${earned >= q.points ? '⭕' : '❌'}
+          <span class="muted">인정 답안: ${(q.acceptedAnswers ?? []).map(esc).join(', ')}</span></div>
+        <label>점수 정정 <input type="number" min="0" max="${q.points}" value="${cur}"
+          data-grade-q="${q.id}" style="width:70px"> / ${q.points}점
+          <span class="muted">(비우면 자동 채점 유지)</span></label>
+      </div>`;
+    }
     return `<div class="q-card">
       <b>Q${i + 1}. (서술형 ${q.points}점)</b> ${esc(q.text)}
       <div class="answer-box">${esc(a?.text ?? '(무응답)')}</div>
@@ -518,7 +578,8 @@ $('#btn-close-grades').addEventListener('click', () => $('#grade-modal').classLi
 $('#btn-save-grades').addEventListener('click', async () => {
   const manualGrades = {};
   $$('#grade-content [data-grade-q]').forEach((inp) => {
-    if (inp.value !== '') manualGrades[inp.dataset.gradeQ] = Number(inp.value);
+    // 빈 값은 "수동 정정 해제"로 서버에 전달됨
+    manualGrades[inp.dataset.gradeQ] = inp.value === '' ? '' : Number(inp.value);
   });
   try {
     await api('POST', `/api/teacher/exams/${monitorExamId}/attempts/${gradingAttemptId}/grade`, { manualGrades });

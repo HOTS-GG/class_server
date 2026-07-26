@@ -67,7 +67,34 @@ header {
 }
 .progress-nav button.answered { background: #bbf7d0; border-color: #16a34a; }
 
-#exam-questions { max-width: 820px; margin: 0 auto; padding: 16px 20px 20px; }
+.exam-body {
+  display: flex; gap: 14px; align-items: flex-start;
+  max-width: 1060px; margin: 0 auto; padding: 16px 20px 20px;
+}
+#exam-questions { flex: 1; min-width: 0; }
+
+/* 답안 표기란(OMR) — 문제 영역과 분리된 선택란 */
+#omr-panel {
+  width: 210px; flex-shrink: 0; position: sticky; top: 104px;
+  background: #fff; border: 1px solid #dde4ec; border-radius: 12px;
+  padding: 12px; max-height: calc(100vh - 130px); overflow-y: auto;
+}
+.omr-title { font-weight: 700; font-size: 14px; margin-bottom: 8px; text-align: center; }
+.omr-row {
+  display: flex; align-items: center; gap: 4px; padding: 4px 0;
+  border-bottom: 1px dashed #eef2f7;
+}
+.omr-row:last-child { border-bottom: none; }
+.omr-no { width: 24px; font-size: 13px; font-weight: 700; color: #475569; }
+.omr-bubble {
+  width: 27px; height: 27px; border-radius: 50%; padding: 0; font-size: 12px;
+  border: 1.5px solid #94a3b8; background: #fff; cursor: pointer;
+}
+.omr-bubble.filled { background: #1f3a5f; color: #fff; border-color: #1f3a5f; }
+.omr-label { font-size: 12px; color: #94a3b8; }
+.omr-label.filled { color: #15803d; font-weight: 700; }
+.short-input { margin-top: 10px; }
+@media (max-width: 780px) { #omr-panel { display: none; } }
 .question {
   background: #fff; border: 1px solid #dde4ec; border-radius: 12px;
   padding: 18px; margin-bottom: 14px;

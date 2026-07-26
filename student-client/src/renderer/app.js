@@ -268,6 +268,13 @@ function renderExamQuestions() {
           </label>`).join('')}
       </div>`;
     }
+    if (q.type === 'short') {
+      return `<div class="question" id="qbox-${q.id}">
+        <div class="q-text">${q.no}. ${esc(q.text)}<span class="q-points">[${q.points}점] 단답형</span></div>
+        <input type="text" class="short-input" data-shortq="${q.id}" value="${esc(saved?.text ?? '')}"
+          placeholder="정답을 직접 입력하세요. (붙여넣기 사용 불가)">
+      </div>`;
+    }
     return `<div class="question" id="qbox-${q.id}">
       <div class="q-text">${q.no}. ${esc(q.text)}<span class="q-points">[${q.points}점] 서술형</span></div>
       <textarea data-essay="${q.id}" placeholder="답안을 직접 입력하세요. (붙여넣기 사용 불가)">${esc(saved?.text ?? '')}</textarea>
@@ -285,25 +292,62 @@ function renderExamQuestions() {
     });
   });
 
-  // 서술형 입력 (1초 디바운스 자동 저장)
+  // 단답형/서술형 입력 (1초 디바운스 자동 저장)
   const debounces = {};
-  $('#exam-questions').querySelectorAll('textarea[data-essay]').forEach((ta) => {
-    ta.addEventListener('input', () => {
-      const qid = ta.dataset.essay;
+  const bindTextSave = (el, qid) => {
+    el.addEventListener('input', () => {
       clearTimeout(debounces[qid]);
       $('#save-status').textContent = '입력 중...';
-      debounces[qid] = setTimeout(() => saveAnswer(qid, { text: ta.value }), 1000);
+      debounces[qid] = setTimeout(() => saveAnswer(qid, { text: el.value }), 1000);
     });
-  });
+  };
+  $('#exam-questions').querySelectorAll('textarea[data-essay]').forEach((ta) => bindTextSave(ta, ta.dataset.essay));
+  $('#exam-questions').querySelectorAll('input[data-shortq]').forEach((inp) => bindTextSave(inp, inp.dataset.shortq));
 }
 
+const isAnswered = (q) => {
+  const a = examData.answers[q.id];
+  return !!a && (q.type === 'mc' ? a.choiceId != null : (a.text ?? '').trim() !== '');
+};
+
 function renderProgressNav() {
-  $('#exam-progress').innerHTML = examData.questions.map((q) => {
-    const a = examData.answers[q.id];
-    const answered = a && (q.type === 'mc' ? a.choiceId != null : (a.text ?? '').trim() !== '');
-    return `<button class="${answered ? 'answered' : ''}" data-goto="${q.id}">${q.no}</button>`;
+  $('#exam-progress').innerHTML = examData.questions.map((q) =>
+    `<button class="${isAnswered(q) ? 'answered' : ''}" data-goto="${q.id}">${q.no}</button>`).join('');
+  renderOmr();
+}
+
+// 답안 표기란(OMR): 문제 영역과 분리된 선택란. 클릭 시 해당 문항 답이 선택된다.
+function renderOmr() {
+  const typeShort = { short: '단답', essay: '서술' };
+  $('#omr-panel').innerHTML = '<div class="omr-title">답안 표기란</div>' + examData.questions.map((q) => {
+    if (q.type === 'mc') {
+      const a = examData.answers[q.id];
+      return `<div class="omr-row"><span class="omr-no">${q.no}</span>` +
+        q.choices.map((c, ci) =>
+          `<button class="omr-bubble ${a?.choiceId === c.id ? 'filled' : ''}"
+            data-omr-q="${q.id}" data-omr-c="${c.id}" title="${q.no}번 ${ci + 1}번 보기">${ci + 1}</button>`).join('') +
+        '</div>';
+    }
+    const done = isAnswered(q);
+    return `<div class="omr-row"><span class="omr-no">${q.no}</span>
+      <span class="omr-label ${done ? 'filled' : ''}" data-omr-goto="${q.id}">${typeShort[q.type]}${done ? ' ✓ 작성함' : ' — 미작성'}</span></div>`;
   }).join('');
 }
+
+$('#omr-panel').addEventListener('click', (e) => {
+  const bubble = e.target.closest('button[data-omr-q]');
+  if (bubble) {
+    const radio = document.querySelector(`input[name="q-${bubble.dataset.omrQ}"][value="${bubble.dataset.omrC}"]`);
+    if (radio && !radio.checked) {
+      radio.checked = true;
+      radio.dispatchEvent(new Event('change')); // 문제 영역과 동기화 + 저장
+    }
+    $(`#qbox-${bubble.dataset.omrQ}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  const label = e.target.closest('[data-omr-goto]');
+  if (label) $(`#qbox-${label.dataset.omrGoto}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
 $('#exam-progress').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (btn?.dataset.goto) $(`#qbox-${btn.dataset.goto}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });

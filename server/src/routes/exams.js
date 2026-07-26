@@ -1,6 +1,8 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { toCsv } from '../../../shared/src/csv.js';
 import { newId } from '../../../shared/src/id.js';
+import { parseExamExcel, buildTemplateExcel } from '../services/excelImport.js';
 
 // 대시보드 입력을 내부 모델로 정규화. 문항/선택지에 안정적 id 부여.
 function normalizeQuestions(questions) {
@@ -8,13 +10,20 @@ function normalizeQuestions(questions) {
     throw new Error('문항이 최소 1개 필요합니다.');
   }
   return questions.map((q, qi) => {
-    const type = q.type === 'essay' ? 'essay' : 'mc';
+    const type = q.type === 'essay' ? 'essay' : q.type === 'short' ? 'short' : 'mc';
     const text = String(q.text ?? '').trim();
     if (!text) throw new Error(`${qi + 1}번 문항의 내용이 비어 있습니다.`);
     const points = Number(q.points);
     if (!Number.isFinite(points) || points < 0) throw new Error(`${qi + 1}번 문항의 배점이 잘못되었습니다.`);
     const base = { id: q.id ?? newId('q'), type, text, points };
     if (type === 'essay') return base;
+
+    if (type === 'short') {
+      const raw = Array.isArray(q.acceptedAnswers) ? q.acceptedAnswers : String(q.acceptedAnswers ?? '').split(';');
+      const acceptedAnswers = raw.map((s) => String(s).trim()).filter(Boolean);
+      if (!acceptedAnswers.length) throw new Error(`${qi + 1}번 문항(단답형)의 인정 답안이 필요합니다.`);
+      return { ...base, acceptedAnswers };
+    }
 
     const choiceTexts = (q.choices ?? []).map((c) => String(typeof c === 'object' ? c.text : c).trim());
     if (choiceTexts.filter(Boolean).length < 2) throw new Error(`${qi + 1}번 문항의 선택지가 2개 이상 필요합니다.`);
@@ -41,6 +50,25 @@ export function examRouters({ db, presence, examService }) {
       durationSec: e.durationSec ?? null, startedAt: e.startedAt ?? null,
       endsAt: e.endsAt ?? null, createdAt: e.createdAt,
     })));
+  });
+
+  // 엑셀 문제 양식 다운로드 (주의: '/:id'보다 먼저 등록해야 함)
+  teacher.get('/template.xlsx', (req, res) => {
+    res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.set('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent('문제양식.xlsx'));
+    res.send(buildTemplateExcel());
+  });
+
+  // 엑셀 문제 파일 업로드 → 파싱된 문항 반환 (편집기에서 검토 후 저장)
+  const excelUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+  teacher.post('/import-excel', excelUpload.single('file'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: '엑셀 파일이 필요합니다.' });
+    try {
+      const { questions, errors } = parseExamExcel(req.file.buffer);
+      res.json({ questions, errors });
+    } catch (err) {
+      res.status(400).json({ error: `엑셀 파싱 실패: ${err.message}` });
+    }
   });
 
   teacher.get('/:id', (req, res) => {
@@ -165,10 +193,15 @@ export function examRouters({ db, presence, examService }) {
     if (!e || !att) return res.status(404).json({ error: '응시 기록을 찾을 수 없습니다.' });
     const grades = req.body?.manualGrades ?? {};
     for (const [qid, val] of Object.entries(grades)) {
-      const q = e.questions.find((x) => x.id === qid && x.type === 'essay');
+      // 서술형 채점 + 단답형 수동 정정 (객관식은 자동 채점만)
+      const q = e.questions.find((x) => x.id === qid && x.type !== 'mc');
       if (!q) continue;
+      if (val === '' || val === null || val === undefined) {
+        delete att.manualGrades[qid];
+        continue;
+      }
       const n = Number(val);
-      att.manualGrades[qid] = Number.isFinite(n) ? n : 0;
+      if (Number.isFinite(n)) att.manualGrades[qid] = n;
     }
     const detail = examService.regrade(e, att);
     db.scheduleFlush();
@@ -178,10 +211,11 @@ export function examRouters({ db, presence, examService }) {
   teacher.get('/:id/results.csv', (req, res) => {
     const e = examService.findExam(req.params.id);
     if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+    const qTypeKo = { mc: '객관식', short: '단답형', essay: '서술형' };
     const header = [
       '출석번호', '이름', '응시', '제출시각', '제출유형', '이탈횟수', '이탈시간(초)',
-      '객관식점수', '서술형점수', '총점', '만점',
-      ...e.questions.map((q, i) => `Q${i + 1}(${q.points}점)`),
+      '자동채점점수', '수동채점점수', '총점', '만점',
+      ...e.questions.map((q, i) => `Q${i + 1} ${qTypeKo[q.type]}(${q.points}점)`),
     ];
     const typeLabel = { manual: '직접제출', auto: '시간종료', teacher: '교사종료' };
     const rows = [header];
@@ -198,6 +232,16 @@ export function examRouters({ db, presence, examService }) {
         d?.mcScore ?? '', d?.essayScore ?? '', d?.total ?? '', d?.maxTotal ?? '',
         ...e.questions.map((q) => d?.perQuestion?.[q.id] ?? ''),
       ]);
+    }
+    // 문항별 정답률(평균 득점률 %) 요약 행
+    const submittedAttempts = db.data.attempts.filter((a) => a.examId === e.id && a.submittedAt);
+    if (submittedAttempts.length) {
+      const rates = e.questions.map((q) => {
+        if (!q.points) return '';
+        const sum = submittedAttempts.reduce((s, a) => s + (a.scoreDetail?.perQuestion?.[q.id] ?? 0), 0);
+        return Math.round((sum / (submittedAttempts.length * q.points)) * 100);
+      });
+      rows.push(['', '', '', '', '', '', '', '', '', '', '문항별 정답률(%)', ...rates]);
     }
     res.set('Content-Type', 'text/csv; charset=utf-8');
     res.set('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(`결과_${e.title}.csv`));

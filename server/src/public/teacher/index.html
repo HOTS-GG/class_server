@@ -81,6 +81,9 @@
       <h2>시험 목록</h2>
       <div class="toolbar">
         <button id="btn-new-exam" class="primary">새 시험 만들기</button>
+        <input id="excel-file" type="file" accept=".xlsx,.xls" class="hidden">
+        <button id="btn-import-excel">엑셀로 문제 가져오기</button>
+        <a href="/api/teacher/exams/template.xlsx" download><button>문제 양식(엑셀) 다운로드</button></a>
       </div>
       <div id="exam-list"></div>
     </div>
@@ -98,6 +101,7 @@
       <div id="question-editor"></div>
       <div class="toolbar">
         <button id="btn-add-mc">+ 객관식 문항</button>
+        <button id="btn-add-short">+ 단답형 문항</button>
         <button id="btn-add-essay">+ 서술형 문항</button>
         <span class="sep"></span>
         <button id="btn-save-exam" class="primary">저장</button>
