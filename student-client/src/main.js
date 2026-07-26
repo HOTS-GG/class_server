@@ -6,6 +6,9 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, ipcMain, clipboard, powerMonitor, Menu, dialog } from 'electron';
 import { DISCOVERY_MAGIC, DISCOVERY_REPLY, DEFAULT_UDP_PORT } from '../../shared/src/constants.js';
+import { enableUtf8Console } from '../../shared/src/winConsole.js';
+
+enableUtf8Console();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

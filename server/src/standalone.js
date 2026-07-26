@@ -1,6 +1,9 @@
 // Electron 없이 서버만 실행 (개발/테스트용): node server/src/standalone.js
 import path from 'node:path';
+import { enableUtf8Console } from '../../shared/src/winConsole.js';
 import { createClassServer, lanAddresses } from './app.js';
+
+enableUtf8Console();
 
 const dataDir = process.env.CLASS_DATA_DIR ?? path.resolve('classdata');
 const httpPort = Number(process.env.CLASS_HTTP_PORT ?? 3690);

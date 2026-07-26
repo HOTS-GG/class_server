@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { io } from 'socket.io-client';
 import { createClassServer } from '../server/src/app.js';
+import { enableUtf8Console } from '../shared/src/winConsole.js';
+
+enableUtf8Console();
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'class-smoke-'));
 const port = 3777;

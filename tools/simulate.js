@@ -3,6 +3,9 @@
 //   예:   node tools/simulate.js http://localhost:3690 40
 // 사전 조건: 서버 실행 중 + 학생 명단 등록됨 + (시험 테스트 시) 시험 시작됨
 import { io } from 'socket.io-client';
+import { enableUtf8Console } from '../shared/src/winConsole.js';
+
+enableUtf8Console();
 
 const base = process.argv[2] ?? 'http://localhost:3690';
 const count = Number(process.argv[3] ?? 10);

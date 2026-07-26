@@ -2,6 +2,9 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog, Menu } from 'electron';
 import { createClassServer } from '../../server/src/app.js';
 import { DEFAULT_HTTP_PORT } from '../../shared/src/constants.js';
+import { enableUtf8Console } from '../../shared/src/winConsole.js';
+
+enableUtf8Console();
 
 let server = null;
 let win = null;
