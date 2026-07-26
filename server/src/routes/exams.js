@@ -49,6 +49,8 @@ export function examRouters({ db, presence, examService }) {
       durationMin: e.durationMin ?? null,
       durationSec: e.durationSec ?? null, startedAt: e.startedAt ?? null,
       endsAt: e.endsAt ?? null, createdAt: e.createdAt,
+      resultsPublished: e.resultsPublished === true,
+      lockdown: e.lockdown === true,
     })));
   });
 
@@ -117,13 +119,44 @@ export function examRouters({ db, presence, examService }) {
     }
   });
 
+  // 초안·종료 시험 삭제 (응시 기록도 함께 삭제 — 진행 중 시험은 불가)
   teacher.delete('/:id', (req, res) => {
     const idx = db.data.exams.findIndex((e) => e.id === req.params.id);
     if (idx < 0) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
     if (db.data.exams[idx].status === 'active') return res.status(400).json({ error: '진행 중인 시험은 삭제할 수 없습니다.' });
+    const examId = db.data.exams[idx].id;
     db.data.exams.splice(idx, 1);
+    db.data.attempts = db.data.attempts.filter((a) => a.examId !== examId);
     db.scheduleFlush();
     res.json({ ok: true });
+  });
+
+  // 시험 복제 → 새 초안 생성 (재시험용 — 기존 시험과 결과는 그대로 보존)
+  teacher.post('/:id/duplicate', (req, res) => {
+    const e = examService.findExam(req.params.id);
+    if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+    const copy = {
+      id: newId('ex'),
+      title: `${e.title} (재시험)`,
+      status: 'draft',
+      shuffleQuestions: e.shuffleQuestions,
+      shuffleChoices: e.shuffleChoices,
+      durationMin: e.durationMin,
+      questions: structuredClone(e.questions),
+      createdAt: Date.now(),
+    };
+    db.data.exams.push(copy);
+    db.scheduleFlush();
+    res.json(copy);
+  });
+
+  // 성적 공개/비공개 전환 — 공개하면 학생이 자기 점수·정답을 볼 수 있다
+  teacher.post('/:id/publish-results', (req, res) => {
+    const e = examService.findExam(req.params.id);
+    if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+    if (e.status !== 'ended') return res.status(400).json({ error: '종료된 시험만 성적을 공개할 수 있습니다.' });
+    examService.setResultsPublished(e, req.body?.published !== false);
+    res.json({ ok: true, resultsPublished: e.resultsPublished });
   });
 
   teacher.post('/:id/start', (req, res) => {
@@ -132,7 +165,7 @@ export function examRouters({ db, presence, examService }) {
       if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
       if (e.status === 'ended') return res.status(400).json({ error: '이미 종료된 시험입니다.' });
       const durationMin = Number(req.body?.durationMin) || e.durationMin || 30;
-      examService.startExam(e, Math.round(durationMin * 60));
+      examService.startExam(e, Math.round(durationMin * 60), { lockdown: req.body?.lockdown === true });
       presence.resetFocusStats();
       db.scheduleFlush();
       res.json({ ok: true, endsAt: e.endsAt });
@@ -172,7 +205,10 @@ export function examRouters({ db, presence, examService }) {
         };
       });
     res.json({
-      exam: { id: e.id, title: e.title, status: e.status, endsAt: e.endsAt ?? null, durationSec: e.durationSec ?? null },
+      exam: {
+        id: e.id, title: e.title, status: e.status, endsAt: e.endsAt ?? null,
+        durationSec: e.durationSec ?? null, resultsPublished: e.resultsPublished === true,
+      },
       serverNow: Date.now(),
       rows,
     });
@@ -255,6 +291,37 @@ export function examRouters({ db, presence, examService }) {
     const active = examService.activeExamFor(req.student.id);
     if (!active) return res.json({ exam: null });
     res.json(examService.buildStudentPayload(active.exam, active.attempt));
+  });
+
+  // 성적이 공개된 시험 목록 (내 점수 요약)
+  student.get('/results', (req, res) => {
+    const list = db.data.exams
+      .filter((e) => e.status === 'ended' && e.resultsPublished === true)
+      .map((e) => {
+        const att = examService.attemptOf(e.id, req.student.id);
+        if (!att) return null;
+        return {
+          examId: e.id,
+          title: e.title,
+          submittedAt: att.submittedAt,
+          total: att.score,
+          maxTotal: att.scoreDetail?.maxTotal ?? null,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (b.submittedAt ?? 0) - (a.submittedAt ?? 0));
+    res.json(list);
+  });
+
+  // 공개된 시험의 내 상세 결과 (문항별 정오·정답)
+  student.get('/:id/result', (req, res) => {
+    const e = examService.findExam(req.params.id);
+    if (!e || e.status !== 'ended' || e.resultsPublished !== true) {
+      return res.status(404).json({ error: '성적이 공개되지 않은 시험입니다.' });
+    }
+    const att = examService.attemptOf(e.id, req.student.id);
+    if (!att) return res.status(404).json({ error: '응시 기록이 없습니다.' });
+    res.json(examService.buildResultPayload(e, att));
   });
 
   // 소켓이 끊겼을 때의 HTTP 폴백

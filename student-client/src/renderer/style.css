@@ -50,6 +50,16 @@ header {
 .asg-card .submit-row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
 .badge-done { color: #15803d; font-weight: 700; font-size: 13px; }
 
+#result-list { padding: 0 20px 40px; }
+.result-card {
+  background: #fff; border: 1px solid #dde4ec; border-radius: 12px;
+  padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px;
+}
+.result-card .title { font-weight: 700; flex: 1; }
+.result-card .score { font-size: 18px; font-weight: 700; color: #2563eb; }
+.result-mark-o { color: #15803d; font-weight: 700; }
+.result-mark-x { color: #b91c1c; font-weight: 700; }
+
 .notice {
   margin: 14px 20px 0; background: #fef3c7; border: 1px solid #f59e0b;
   padding: 12px 16px; border-radius: 10px; font-size: 15px;
@@ -72,6 +82,8 @@ header {
   max-width: 1060px; margin: 0 auto; padding: 16px 20px 20px;
 }
 #exam-questions { flex: 1; min-width: 0; }
+/* 상단 고정 바(헤더+번호줄)에 가려지지 않고 문항 머리에 정확히 스크롤되도록 */
+.question { scroll-margin-top: 112px; }
 
 /* 답안 표기란(OMR) — 문제 영역과 분리된 선택란 */
 #omr-panel {

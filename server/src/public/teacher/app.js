@@ -266,11 +266,13 @@ async function loadExams() {
       <span class="title">${esc(e.title)}</span>
       <span class="muted">${e.questionCount}문항 · ${e.totalPoints}점 · ${e.durationMin ?? Math.round((e.durationSec ?? 1800) / 60)}분</span>
       <span class="status-pill ${e.status}">${label[e.status]}</span>
+      ${e.resultsPublished ? '<span class="status-pill published">성적 공개됨</span>' : ''}
       ${e.status === 'draft' ? `
         <button class="small" data-act="edit" data-id="${e.id}">수정</button>
-        <button class="small primary" data-act="start" data-id="${e.id}">시작</button>
-        <button class="small" data-act="del" data-id="${e.id}">삭제</button>` : ''}
+        <button class="small primary" data-act="start" data-id="${e.id}">시작</button>` : ''}
       ${e.status !== 'draft' ? `<button class="small" data-act="monitor" data-id="${e.id}">감독/결과</button>` : ''}
+      <button class="small" data-act="dup" data-id="${e.id}">복제</button>
+      ${e.status !== 'active' ? `<button class="small" data-act="del" data-id="${e.id}">삭제</button>` : ''}
     </div>`).join('') : '<p class="muted">아직 시험이 없습니다.</p>';
 
   $('#exam-list').onclick = async (e) => {
@@ -280,14 +282,20 @@ async function loadExams() {
     try {
       if (btn.dataset.act === 'edit') await openExamEditor(id);
       else if (btn.dataset.act === 'del') {
-        if (!confirm('시험을 삭제할까요?')) return;
+        if (!confirm('시험을 삭제할까요?\n(종료된 시험은 학생 응시 기록과 점수도 함께 삭제됩니다. 필요하면 결과 CSV를 먼저 내려받으세요.)')) return;
         await api('DELETE', `/api/teacher/exams/${id}`);
+        toast('시험을 삭제했습니다.');
+        await loadExams();
+      } else if (btn.dataset.act === 'dup') {
+        const copy = await api('POST', `/api/teacher/exams/${id}/duplicate`);
+        toast(`"${copy.title}" 초안이 만들어졌습니다. 수정하거나 바로 시작할 수 있습니다.`);
         await loadExams();
       } else if (btn.dataset.act === 'start') {
         const exam = await api('GET', `/api/teacher/exams/${id}`);
         const min = prompt('시험 시간(분)을 입력하세요.', exam.durationMin ?? 30);
         if (min == null) return;
-        await api('POST', `/api/teacher/exams/${id}/start`, { durationMin: Number(min) });
+        const lockdown = confirm('학생 화면을 전체화면으로 잠글까요?\n\n[확인] 전체화면 잠금 모드 (부정행위 방지 강화)\n[취소] 일반 창 모드 (붙여넣기 차단·이탈 감지는 동일하게 작동)');
+        await api('POST', `/api/teacher/exams/${id}/start`, { durationMin: Number(min), lockdown });
         toast('시험을 시작했습니다.');
         await openMonitor(id);
       } else if (btn.dataset.act === 'monitor') {
@@ -485,6 +493,16 @@ $('#btn-monitor-back').addEventListener('click', () => {
   loadExams();
 });
 
+$('#btn-publish-results').addEventListener('click', async () => {
+  const publishing = !monitorData?.exam?.resultsPublished;
+  if (publishing && !confirm('학생들에게 성적을 공개할까요?\n각 학생은 본인의 점수, 문항별 정오, 정답을 볼 수 있게 됩니다.\n(서술형 채점을 먼저 마쳤는지 확인하세요.)')) return;
+  try {
+    await api('POST', `/api/teacher/exams/${monitorExamId}/publish-results`, { published: publishing });
+    toast(publishing ? '성적을 공개했습니다.' : '성적 공개를 취소했습니다.');
+    await refreshMonitor();
+  } catch (err) { toast(err.message, 'warn'); }
+});
+
 $('#btn-stop-exam').addEventListener('click', async () => {
   if (!confirm('시험을 지금 종료할까요? 미제출 학생은 자동 제출됩니다.')) return;
   try {
@@ -500,6 +518,10 @@ async function refreshMonitor() {
   const { exam, rows } = monitorData;
   $('#monitor-title').textContent = `${exam.title} — ${exam.status === 'active' ? '진행 중' : '종료됨'}`;
   $('#btn-stop-exam').classList.toggle('hidden', exam.status !== 'active');
+  const pubBtn = $('#btn-publish-results');
+  pubBtn.classList.toggle('hidden', exam.status !== 'ended');
+  pubBtn.textContent = exam.resultsPublished ? '성적 공개 취소' : '성적 공개 (학생에게 점수 보내기)';
+  pubBtn.classList.toggle('primary', !exam.resultsPublished);
   updateMonitorTimer();
   const typeLabel = { manual: '직접', auto: '시간종료', teacher: '교사종료' };
   $('#monitor-table tbody').innerHTML = rows.map((r) => {

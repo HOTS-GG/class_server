@@ -90,6 +90,7 @@ await post(`/api/teacher/exams/${exam.id}/start`, { durationMin: 1 });
 const v1 = await get('/api/student/exams/active', auth1.token);
 const v2 = await get('/api/student/exams/active', auth2.token);
 check('학생 응시 화면 수신', v1.exam?.id === exam.id);
+check('전체화면 잠금 기본 꺼짐', v1.exam?.lockdown === false);
 check('학생별 문항 순서 상이', v1.questions.map((q) => q.text).join() !== v2.questions.map((q) => q.text).join());
 check('정답 미노출(객관식+단답형)',
   !JSON.stringify(v1).includes('answerChoiceId') && !JSON.stringify(v1).includes('acceptedAnswers'));
@@ -162,6 +163,28 @@ const excelImp = await fetch(`${base}/api/teacher/exams/import-excel`, { method:
 check('엑셀 문제 가져오기 (4문항, 오류 0)', excelImp.questions?.length === 4 && excelImp.errors?.length === 0);
 const excelExam = await post('/api/teacher/exams', { title: '엑셀 시험', questions: excelImp.questions });
 check('엑셀 문항으로 시험 생성', excelExam.questions?.length === 4 && excelExam.questions[2].acceptedAnswers?.length === 2);
+
+// ── 성적 공개 → 학생 결과 확인 ─────────────────────────────
+const pub = await post(`/api/teacher/exams/${exam.id}/publish-results`, { published: true });
+check('성적 공개', pub.resultsPublished === true);
+const myResults = await get('/api/student/exams/results', auth1.token);
+check('학생 성적 목록(38점)', myResults.length === 1 && myResults[0].total === 38);
+const myDetail = await get(`/api/student/exams/${exam.id}/result`, auth1.token);
+check('학생 결과 상세(문항별 정오·정답 포함)',
+  myDetail.total === 38 && myDetail.questions.filter((q) => q.correctAnswer != null).length === 6);
+await post(`/api/teacher/exams/${exam.id}/publish-results`, { published: false });
+const hiddenRes = await get(`/api/student/exams/${exam.id}/result`, auth1.token);
+check('공개 취소 시 학생 조회 차단', !!hiddenRes.error);
+
+// ── 복제(재시험)와 삭제 ─────────────────────────────
+const dup = await post(`/api/teacher/exams/${exam.id}/duplicate`);
+check('시험 복제 → 재시험 초안', dup.status === 'draft' && dup.questions.length === exam.questions.length
+  && dup.title.includes('재시험'));
+const delDup = await fetch(`${base}/api/teacher/exams/${dup.id}`, { method: 'DELETE' }).then((r) => r.json());
+check('초안 삭제', delDup.ok === true);
+const delEnded = await fetch(`${base}/api/teacher/exams/${exam.id}`, { method: 'DELETE' }).then((r) => r.json());
+const attemptsLeft = server.db.data.attempts.filter((a) => a.examId === exam.id).length;
+check('종료 시험 삭제(응시 기록 포함)', delEnded.ok === true && attemptsLeft === 0);
 
 // ── 이벤트 로그(JSONL) ─────────────────────────────
 check('답안 JSONL 기록', server.db.readEvents(`answers-${exam.id}`).length >= 7);

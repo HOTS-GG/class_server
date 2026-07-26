@@ -96,6 +96,7 @@ async function afterLogin() {
   if (!hasExam) {
     showScreen('screen-home');
     loadAssignments();
+    loadResults();
   }
 }
 
@@ -141,6 +142,11 @@ function connectSocket() {
 
   socket.on('assignment:closed', () => {
     if ($('#screen-home').classList.contains('active')) loadAssignments();
+  });
+
+  socket.on('exam:results-published', (ev) => {
+    toast(`📊 "${ev.title}" 성적이 공개되었습니다. 홈 화면에서 확인하세요.`);
+    if ($('#screen-home').classList.contains('active')) loadResults();
   });
 
   socket.on('session:kicked', (ev) => {
@@ -224,6 +230,54 @@ $('#assignment-list').addEventListener('click', async (e) => {
   }
 });
 
+// ── 시험 결과(성적 공개) ─────────────────────────────
+async function loadResults() {
+  try {
+    const list = await api('GET', '/api/student/exams/results');
+    $('#results-section').classList.toggle('hidden', !list.length);
+    $('#result-list').innerHTML = list.map((r) => `
+      <div class="result-card">
+        <span class="title">${esc(r.title)}</span>
+        <span class="score">${r.total ?? '-'} / ${r.maxTotal ?? '-'}점</span>
+        <button class="small" data-result="${r.examId}">자세히 보기</button>
+      </div>`).join('');
+  } catch { /* 서버 연결 문제 시 다음 새로고침에서 재시도 */ }
+}
+
+$('#result-list').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-result]');
+  if (btn) openResult(btn.dataset.result);
+});
+
+async function openResult(examId) {
+  try {
+    const r = await api('GET', `/api/student/exams/${examId}/result`);
+    $('#result-title').textContent = r.exam.title;
+    $('#result-total').textContent = `${r.total ?? '-'} / ${r.maxTotal ?? '-'}점`;
+    $('#result-content').innerHTML = r.questions.map((q) => {
+      const mark = q.type === 'essay'
+        ? (q.earned == null ? '<span class="muted">채점 전</span>' : `<b>${q.earned}점</b>`)
+        : q.earned === q.points ? '<span class="result-mark-o">⭕ 정답</span>'
+          : q.earned > 0 ? `<b>△ 부분점수 ${q.earned}점</b>`
+            : '<span class="result-mark-x">❌ 오답</span>';
+      return `<div class="question">
+        <div class="q-text">${q.no}. ${esc(q.text)}
+          <span class="q-points">[${q.points}점 중 ${q.earned ?? 0}점]</span> ${mark}</div>
+        <div style="margin-top:8px;font-size:14px">
+          내 답: <b>${esc(q.myAnswer ?? '무응답')}</b>
+          ${q.correctAnswer != null ? `<br>정답: <b style="color:#15803d">${esc(q.correctAnswer)}</b>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    showScreen('screen-result');
+  } catch (err) { toast(err.message); }
+}
+
+$('#btn-result-back').addEventListener('click', () => {
+  showScreen('screen-home');
+  loadResults();
+});
+
 // ── 시험 ─────────────────────────────
 async function checkActiveExam() {
   try {
@@ -246,8 +300,9 @@ async function checkActiveExam() {
 }
 
 async function enterExam() {
-  examLocked = true;
-  await window.classClient.lock();
+  // 전체화면 잠금은 교사가 시험 시작 시 선택한 경우에만 (기본: 일반 창 유지)
+  examLocked = examData.exam.lockdown === true;
+  if (examLocked) await window.classClient.lock();
   $('#exam-title').textContent = examData.exam.title;
   renderExamQuestions();
   showScreen('screen-exam');
@@ -342,11 +397,11 @@ $('#omr-panel').addEventListener('click', (e) => {
       radio.checked = true;
       radio.dispatchEvent(new Event('change')); // 문제 영역과 동기화 + 저장
     }
-    $(`#qbox-${bubble.dataset.omrQ}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    $(`#qbox-${bubble.dataset.omrQ}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
   const label = e.target.closest('[data-omr-goto]');
-  if (label) $(`#qbox-${label.dataset.omrGoto}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (label) $(`#qbox-${label.dataset.omrGoto}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 $('#exam-progress').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
@@ -425,6 +480,7 @@ async function endExamScreen(title, msg) {
 $('#btn-done-home').addEventListener('click', () => {
   showScreen('screen-home');
   loadAssignments();
+  loadResults();
 });
 
 // ── 종료/잠금 해제 ─────────────────────────────

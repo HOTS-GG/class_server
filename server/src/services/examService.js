@@ -17,7 +17,7 @@ export function createExamService(db, io) {
   const teacherNs = () => io.of('/teacher');
   const studentNs = () => io.of('/student');
 
-  function startExam(exam, durationSec) {
+  function startExam(exam, durationSec, options = {}) {
     if (exam.status === 'active') throw new Error('이미 진행 중인 시험입니다.');
     const otherActive = db.data.exams.find((e) => e.status === 'active');
     if (otherActive) throw new Error(`다른 시험(${otherActive.title})이 진행 중입니다. 먼저 종료하세요.`);
@@ -25,6 +25,7 @@ export function createExamService(db, io) {
 
     exam.status = 'active';
     exam.durationSec = durationSec;
+    exam.lockdown = options.lockdown === true; // 전체화면 잠금은 선택 사항 (기본 꺼짐)
     exam.startedAt = Date.now();
     exam.endsAt = exam.startedAt + durationSec * 1000;
 
@@ -160,6 +161,7 @@ export function createExamService(db, io) {
         startedAt: exam.startedAt,
         endsAt: exam.endsAt,
         status: exam.status,
+        lockdown: exam.lockdown === true,
       },
       serverNow: Date.now(),
       submitted: !!attempt.submittedAt,
@@ -174,6 +176,46 @@ export function createExamService(db, io) {
           text: q.text,
           points: q.points,
           choices: (attempt.choiceOrder[qid] ?? []).map((cid) => ({ id: cid, text: choiceById[cid].text })),
+        };
+      }),
+    };
+  }
+
+  // 성적 공개/비공개 전환 + 학생 알림
+  function setResultsPublished(exam, published) {
+    exam.resultsPublished = published === true;
+    db.scheduleFlush();
+    if (exam.resultsPublished) {
+      studentNs().emit('exam:results-published', { examId: exam.id, title: exam.title });
+    }
+    teacherNs().emit('exam:status', { examId: exam.id, status: exam.status, resultsPublished: exam.resultsPublished });
+  }
+
+  // 성적 공개 후 학생이 보는 본인 결과: 문항별 내 답/정답/득점
+  function buildResultPayload(exam, attempt) {
+    const detail = attempt.scoreDetail ?? { perQuestion: {}, total: null, maxTotal: null };
+    const byId = Object.fromEntries(exam.questions.map((q) => [q.id, q]));
+    return {
+      exam: { id: exam.id, title: exam.title },
+      submittedAt: attempt.submittedAt,
+      total: attempt.score,
+      maxTotal: detail.maxTotal,
+      autoScore: detail.autoScore ?? detail.mcScore,
+      manualScore: detail.manualScore ?? detail.essayScore,
+      questions: attempt.questionOrder.map((qid, idx) => {
+        const q = byId[qid];
+        const a = attempt.answers[qid];
+        const choiceText = (cid) => q.choices?.find((c) => c.id === cid)?.text ?? null;
+        return {
+          no: idx + 1,
+          type: q.type,
+          text: q.text,
+          points: q.points,
+          earned: detail.perQuestion?.[qid] ?? null,
+          myAnswer: q.type === 'mc' ? choiceText(a?.choiceId) : (a?.text ?? null),
+          correctAnswer: q.type === 'mc' ? choiceText(q.answerChoiceId)
+            : q.type === 'short' ? (q.acceptedAnswers ?? []).join(', ')
+              : null,
         };
       }),
     };
@@ -218,5 +260,6 @@ export function createExamService(db, io) {
   return {
     findExam, attemptOf, startExam, endExam, saveAnswer, submit, regrade,
     buildStudentPayload, activeExamFor, countAnswered, restore, stopAllTimers,
+    setResultsPublished, buildResultPayload,
   };
 }
