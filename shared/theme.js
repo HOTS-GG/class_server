@@ -42,6 +42,8 @@
   }
 
   function applyScale(scale) {
+    // <html data-no-scale> 인 화면(세이브 선택 창 등 고정 크기 창)은 배율을 적용하지 않는다
+    if (root.hasAttribute('data-no-scale')) return;
     // Chromium의 zoom: 레이아웃 전체가 배율만큼 커진다 (글자·버튼·표 모두)
     root.style.zoom = String(scale);
     document.querySelectorAll('select[data-scale-select]').forEach((sel) => {

@@ -44,13 +44,21 @@ function writeRecent(list) {
 function touchRecent(file) {
   const list = readRecent().filter((r) => r.file !== file);
   list.unshift({ file, lastOpened: Date.now() });
-  writeRecent(list.slice(0, 10));
+  writeRecent(list.slice(0, 12));
+}
+// 목록에서 제거. 이전 버전 데이터는 자동으로 다시 나타나지 않도록 hidden 표시로 남긴다.
+function forgetRecent(file) {
+  const list = readRecent().filter((r) => r.file !== file);
+  if (file === legacyFile()) list.push({ file, hidden: true });
+  writeRecent(list);
 }
 function recentForUi() {
-  const list = readRecent().map((r) => ({
-    ...r, name: nameOf(r.file), exists: fs.existsSync(r.file), legacy: r.file === legacyFile(),
+  const stored = readRecent();
+  const list = stored.filter((r) => !r.hidden).map((r) => ({
+    ...r, name: r.file === legacyFile() ? '이전 버전 데이터' : nameOf(r.file),
+    exists: fs.existsSync(r.file), legacy: r.file === legacyFile(),
   }));
-  if (fs.existsSync(legacyFile()) && !list.some((r) => r.file === legacyFile())) {
+  if (fs.existsSync(legacyFile()) && !stored.some((r) => r.file === legacyFile())) {
     list.push({ file: legacyFile(), name: '이전 버전 데이터', exists: true, legacy: true, lastOpened: null });
   }
   return list;
@@ -60,11 +68,13 @@ function recentForUi() {
 function showStartWindow() {
   if (startWin) { startWin.focus(); return; }
   startWin = new BrowserWindow({
-    width: 720, height: 620, title: '교실 평가 시스템 — 세이브 파일 선택',
-    autoHideMenuBar: true, resizable: true,
+    width: 720, height: 720, useContentSize: true, title: '교실 평가 시스템 — 세이브 파일 선택',
+    autoHideMenuBar: true, resizable: false, maximizable: false, fullscreenable: false, center: true, show: false,
     webPreferences: { preload: path.join(__dirname, 'start-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   startWin.loadFile(path.join(__dirname, 'start.html'));
+  // 렌더링이 끝난 뒤 보여 주고 앞으로 가져온다 (뒤로 깔리거나 내려간 채 뜨지 않도록)
+  startWin.once('ready-to-show', () => { startWin?.show(); startWin?.focus(); });
   startWin.on('closed', () => {
     startWin = null;
     if (!win && !quitting) app.quit(); // 세이브를 고르지 않고 닫으면 종료
@@ -125,7 +135,8 @@ async function switchWorkspace() {
 
 // ── IPC (시작 화면) ─────────────────────────────
 ipcMain.handle('ws:recent', () => recentForUi());
-ipcMain.handle('ws:forget', (e, file) => { writeRecent(readRecent().filter((r) => r.file !== file)); return true; });
+ipcMain.handle('ws:forget', (e, file) => { forgetRecent(file); return true; });
+ipcMain.handle('ws:version', () => app.getVersion());
 ipcMain.handle('ws:choose-new', async () => {
   const r = await dialog.showSaveDialog(startWin, {
     title: '새 세이브 파일 만들기',

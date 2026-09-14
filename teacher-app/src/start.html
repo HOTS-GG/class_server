@@ -1,37 +1,43 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-no-scale>
 <head>
 <meta charset="utf-8">
 <title>교실 평가 시스템 — 세이브 파일 선택</title>
 <link rel="stylesheet" href="../../shared/theme.css">
 <script src="../../shared/theme.js"></script>
 <style>
-  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .wrap { width: min(640px, 94vw); background: var(--bg-2); border: 1px solid var(--bd-1); border-radius: 16px;
-    padding: 28px 32px; box-shadow: 0 10px 40px var(--shadow); }
+  /* 고정 720×720 창. 배율(zoom) 미적용, 스크롤 없이 한 화면에 맞춘다. */
+  html, body { height: 100%; overflow: hidden; }
+  body { display: flex; flex-direction: column; padding: 24px 28px; box-sizing: border-box; }
+  .top { display: flex; align-items: flex-start; gap: 12px; }
   h1 { font-size: 22px; margin: 0 0 4px; }
-  .lead { color: var(--tx-3); margin: 0 0 18px; font-size: 14px; }
-  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
-  .actions button { font-size: 15px; padding: 12px 18px; }
-  h2 { font-size: 14px; color: var(--tx-2); margin: 16px 0 8px; }
-  .recent { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; }
+  .lead { color: var(--tx-3); margin: 0; font-size: 13px; line-height: 1.5; }
+  .actions { display: flex; gap: 10px; margin: 16px 0 14px; }
+  .actions button { font-size: 15px; padding: 12px 18px; flex: 1; }
+  h2 { font-size: 14px; color: var(--tx-2); margin: 0 0 8px; }
+  .recent { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+    border: 1px solid var(--bd-1); border-radius: 12px; padding: 8px; background: var(--bg-0); }
   .item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--bd-1);
-    border-radius: 10px; background: var(--bg-1); cursor: pointer; }
+    border-radius: 10px; background: var(--bg-2); cursor: pointer; }
   .item:hover { background: var(--bg-hover); }
   .item .name { font-weight: 700; font-size: 15px; }
   .item .path { font-size: 12px; color: var(--tx-4); word-break: break-all; }
   .item .grow { flex: 1; min-width: 0; }
   .item.missing { opacity: .6; }
-  .status { min-height: 22px; font-size: 14px; color: var(--clr-red-text); margin-top: 12px; white-space: pre-wrap; }
+  .status { min-height: 40px; font-size: 14px; color: var(--clr-red-text); margin-top: 10px; white-space: pre-wrap; }
   .status.ok { color: var(--tx-3); }
-  .foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  .foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--tx-4); }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>교실 평가 시스템</h1>
-  <p class="lead">세이브 파일을 열어야 시작할 수 있습니다. 세이브 파일에는 학생 명단·과목·과제·시험·채점 결과·설정이 저장되고,
-    첨부 파일(배부 자료·제출물·답안 첨부)은 같은 위치의 <code>이름.files</code> 폴더에 저장됩니다.</p>
+  <div class="top">
+    <div style="flex:1">
+      <h1>교실 평가 시스템</h1>
+      <p class="lead">세이브 파일을 열어야 시작할 수 있습니다. 세이브 파일에는 학생 명단·과목·과제·시험·채점 결과·설정이 저장되고,
+        첨부 파일은 같은 위치의 <code>이름.files</code> 폴더에 저장됩니다.</p>
+    </div>
+    <button class="theme-toggle" data-theme-toggle title="테마 전환">🌙</button>
+  </div>
   <div class="actions">
     <button id="btn-new" class="primary">＋ 새 세이브 만들기</button>
     <button id="btn-open">📂 세이브 파일 열기 (.classdb)</button>
@@ -39,12 +45,7 @@
   <h2>최근 세이브</h2>
   <div id="recent" class="recent"><span class="muted">최근에 연 세이브가 없습니다.</span></div>
   <div id="status" class="status"></div>
-  <div class="foot">
-    <span class="sep"></span>
-    <label class="muted" style="display:inline-flex;align-items:center;gap:4px">🔍 <select data-scale-select></select></label>
-    <button class="theme-toggle" data-theme-toggle title="테마 전환">🌙</button>
-  </div>
-</div>
+  <div class="foot"><span>✕ 는 목록에서만 제거하며 파일은 삭제되지 않습니다.</span><span class="sep"></span><span id="ver"></span></div>
 <script>
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -60,7 +61,7 @@
   async function loadRecent() {
     const list = await window.startApi.getRecent();
     const box = $('#recent');
-    if (!list.length) { box.innerHTML = '<span class="muted">최근에 연 세이브가 없습니다.</span>'; return; }
+    if (!list.length) { box.innerHTML = '<span class="muted">최근에 연 세이브가 없습니다. 위에서 새로 만들거나 열어 주세요.</span>'; return; }
     box.innerHTML = list.map((r) => `
       <div class="item ${r.exists ? '' : 'missing'}" data-file="${esc(r.file)}">
         <div class="grow">
@@ -94,6 +95,7 @@
     if (item) openFile(item.dataset.file);
   });
   window.startApi.onStatus((p) => { setStatus(p.message, p.ok); if (!p.ok) busy = false; });
+  window.startApi.version?.().then((v) => { $('#ver').textContent = v ? `v${v}` : ''; });
   loadRecent();
 </script>
 </body>

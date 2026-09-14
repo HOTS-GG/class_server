@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld('startApi', {
   chooseOpen: () => ipcRenderer.invoke('ws:choose-open'),
   open: (file) => ipcRenderer.invoke('ws:open', file),
   forget: (file) => ipcRenderer.invoke('ws:forget', file),
+  version: () => ipcRenderer.invoke('ws:version'),
   onStatus: (cb) => ipcRenderer.on('ws:status', (e, payload) => cb(payload)),
 });
