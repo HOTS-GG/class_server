@@ -9,6 +9,7 @@ import { DISCOVERY_MAGIC, DISCOVERY_REPLY, DEFAULT_UDP_PORT } from '../../shared
 import { enableUtf8Console } from '../../shared/src/winConsole.js';
 
 enableUtf8Console();
+app.setName('수업 클라이언트'); // 대화창·오류창 제목에 실행 파일 이름 대신 표시
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

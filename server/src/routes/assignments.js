@@ -4,6 +4,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import archiver from 'archiver';
 import { newId } from '../../../shared/src/id.js';
+import { subjectNameOf, validSubjectId } from './subjects.js';
 
 const FORBIDDEN_CHARS = /[\\/:*?"<>|]/g;
 
@@ -57,14 +58,17 @@ export function assignmentRouters({ db, io }) {
       const submitters = new Set(
         db.data.submissions.filter((s) => s.assignmentId === a.id).map((s) => s.studentId),
       );
-      return { ...a, submittedCount: submitters.size };
+      return { ...a, submittedCount: submitters.size, subjectName: subjectNameOf(db, a.subjectId) };
     });
     res.json(list);
   });
 
   teacher.post('/', upload.array('files'), (req, res) => {
-    const { title, description, allowResubmit } = req.body ?? {};
-    if (!title?.trim()) return res.status(400).json({ error: '과제 제목이 필요합니다.' });
+    const { title, description, allowResubmit, subjectId } = req.body ?? {};
+    if (!title?.trim()) {
+      for (const f of req.files ?? []) fs.rmSync(f.path, { force: true });
+      return res.status(400).json({ error: '과제 제목이 필요합니다.' });
+    }
     const id = newId('asg');
     const files = storeFiles(req.files, assignDir(id));
     const assignment = {
@@ -74,11 +78,26 @@ export function assignmentRouters({ db, io }) {
       status: 'draft',
       files,
       allowResubmit: allowResubmit !== 'false',
+      subjectId: validSubjectId(db, subjectId),
       createdAt: Date.now(),
     };
     db.data.assignments.push(assignment);
     db.scheduleFlush();
     res.json(assignment);
+  });
+
+  // 과제 삭제 — 배부 파일과 제출물도 함께 삭제 (필요하면 zip을 먼저 내려받도록 UI에서 안내)
+  teacher.delete('/:id', (req, res) => {
+    const idx = db.data.assignments.findIndex((x) => x.id === req.params.id);
+    if (idx < 0) return res.status(404).json({ error: '과제를 찾을 수 없습니다.' });
+    const id = db.data.assignments[idx].id;
+    db.data.assignments.splice(idx, 1);
+    db.data.submissions = db.data.submissions.filter((s) => s.assignmentId !== id);
+    fs.rmSync(assignDir(id), { recursive: true, force: true });
+    fs.rmSync(path.join(db.dataDir, 'files', 'submissions', id), { recursive: true, force: true });
+    db.scheduleFlush();
+    io.of('/student').emit('assignment:closed', { assignmentId: id });
+    res.json({ ok: true });
   });
 
   teacher.post('/:id/publish', (req, res) => {
@@ -163,6 +182,7 @@ export function assignmentRouters({ db, io }) {
           title: a.title,
           description: a.description,
           status: a.status,
+          subjectName: subjectNameOf(db, a.subjectId),
           allowResubmit: a.allowResubmit,
           publishedAt: a.publishedAt,
           files: a.files.map((f) => ({ fileId: f.fileId, name: f.name, size: f.size })),

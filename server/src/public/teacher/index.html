@@ -7,12 +7,14 @@
 <link rel="stylesheet" href="theme.css">
 <link rel="stylesheet" href="style.css">
 <script src="theme.js"></script>
+<script src="dialog.js"></script>
 </head>
 <body>
 <header>
   <h1>교실 평가 시스템</h1>
   <div class="header-right">
     <div id="server-info" class="server-info"></div>
+    <label class="scale-ctl" title="화면 크기">🔍 <select data-scale-select></select></label>
     <button class="theme-toggle" data-theme-toggle title="테마 전환">🌙</button>
   </div>
 </header>
@@ -23,6 +25,12 @@
   <button data-tab="assignments">과제</button>
   <button data-tab="exams">시험(CBT)</button>
   <button data-tab="tools">도구 · 설정</button>
+  <span class="sep"></span>
+  <div class="subject-bar">
+    <span class="muted">과목/학급</span>
+    <select id="subject-select" title="시험·과제 목록을 이 과목으로 필터합니다"></select>
+    <button id="btn-subject-manage" class="small">관리</button>
+  </div>
 </nav>
 
 <main>
@@ -39,7 +47,7 @@
   <section id="tab-students" class="tab">
     <h2>학생 명단</h2>
     <div class="toolbar">
-      <input id="stu-number" type="number" placeholder="출석번호" style="width:90px">
+      <input id="stu-number" type="text" inputmode="numeric" placeholder="출석번호" style="width:90px">
       <input id="stu-name" type="text" placeholder="이름" style="width:120px">
       <button id="btn-add-student">추가</button>
       <span class="sep"></span>
@@ -47,6 +55,7 @@
       <button id="btn-import-csv">CSV 불러오기 (번호,이름)</button>
       <a href="/api/teacher/students/codes.csv" download><button>접속코드표 다운로드</button></a>
     </div>
+    <p class="muted">접속 코드를 누르면 크게 볼 수 있습니다. 명단은 모든 과목에서 공통으로 사용됩니다.</p>
     <table id="students-table">
       <thead><tr><th>번호</th><th>이름</th><th>접속코드</th><th>상태</th><th></th></tr></thead>
       <tbody></tbody>
@@ -55,7 +64,7 @@
 
   <!-- 과제 -->
   <section id="tab-assignments" class="tab">
-    <h2>과제 만들기</h2>
+    <h2>과제 만들기 <span id="asg-subject-label" class="muted"></span></h2>
     <div class="card">
       <input id="asg-title" type="text" placeholder="과제 제목">
       <textarea id="asg-desc" placeholder="설명 (선택)"></textarea>
@@ -83,7 +92,7 @@
   <!-- 시험 -->
   <section id="tab-exams" class="tab">
     <div id="exam-list-view">
-      <h2>시험 목록</h2>
+      <h2>시험 목록 <span id="exam-subject-label" class="muted"></span></h2>
       <div class="toolbar">
         <button id="btn-new-exam" class="primary">새 시험 만들기</button>
         <input id="excel-file" type="file" accept=".xlsx,.xls" class="hidden">
@@ -99,7 +108,8 @@
       <div class="card">
         <input id="ex-title" type="text" placeholder="시험 제목">
         <div class="toolbar">
-          <label>기본 시간(분) <input id="ex-duration" type="number" value="30" style="width:70px"></label>
+          <label>과목/학급 <select id="ex-subject"></select></label>
+          <label>기본 시간(분) <input id="ex-duration" type="text" inputmode="numeric" value="30" style="width:70px"></label>
           <label><input id="ex-shuffle-q" type="checkbox" checked> 문항 순서 섞기</label>
           <label><input id="ex-shuffle-c" type="checkbox" checked> 선택지 순서 섞기</label>
           <label title="시험이 끝나면 객관식·단답형 점수를 바로 학생에게 공개합니다. 서술형 점수는 채점(AI 반영/직접 입력)되는 대로 갱신됩니다."><input id="ex-instant" type="checkbox"> 종료 즉시 성적 공개</label>
@@ -155,8 +165,13 @@
           <span id="ai-key-hint" class="muted"></span>
         </label>
         <label>채점 모델
-          <select id="ai-model-select"></select>
+          <div class="row">
+            <input id="ai-model-filter" type="text" placeholder="검색: claude, gpt, gemini…" style="width:200px">
+            <select id="ai-model-select" style="flex:1"></select>
+            <button id="btn-ai-models-sync" class="small" type="button" title="OpenRouter에서 최신 모델 목록을 받아옵니다">🔄 목록 동기화</button>
+          </div>
           <input id="ai-model-custom" type="text" class="hidden" placeholder="OpenRouter 모델 ID 직접 입력 (예: anthropic/claude-sonnet-4.5)">
+          <span id="ai-model-info" class="muted"></span>
         </label>
         <label>PDF 첨부 처리
           <select id="ai-pdf-engine">
@@ -171,6 +186,15 @@
         <button id="btn-ai-test">연결 테스트</button>
         <button id="btn-ai-clear" class="small">키 삭제</button>
         <span id="ai-test-result" class="muted"></span>
+      </div>
+    </div>
+
+    <h2>화면</h2>
+    <div class="card">
+      <div class="toolbar">
+        <label>화면 크기 <select data-scale-select></select></label>
+        <button data-theme-toggle class="theme-toggle" title="테마 전환">🌙</button>
+        <span class="muted">교사 화면에만 적용됩니다. 학생 프로그램은 각자 화면 위쪽에서 조절할 수 있습니다.</span>
       </div>
     </div>
 
@@ -209,7 +233,7 @@
     <h2 id="start-title" style="margin-top:0">시험 시작</h2>
     <div class="form-grid">
       <label>시험 시간(분)
-        <input id="start-duration" type="number" min="1" max="600" value="30">
+        <input id="start-duration" type="text" inputmode="numeric" value="30">
       </label>
       <label style="flex-direction:row;align-items:center;gap:8px;font-weight:400">
         <input id="start-lockdown" type="checkbox"> 학생 화면 전체화면 잠금 (부정행위 방지 강화)
@@ -220,6 +244,30 @@
       <button id="btn-start-ok" class="primary">시작</button>
       <button id="btn-start-cancel">취소</button>
     </div>
+  </div>
+</div>
+
+<div id="code-modal" class="modal hidden">
+  <div class="modal-body code-modal-body">
+    <div id="code-modal-student" class="muted"></div>
+    <div id="code-modal-code" class="code-huge"></div>
+    <div class="muted">학생이 접속 화면에 이 코드를 입력합니다.</div>
+    <div class="toolbar" style="justify-content:center">
+      <button id="btn-code-close" class="primary">닫기</button>
+    </div>
+  </div>
+</div>
+
+<div id="subject-modal" class="modal hidden">
+  <div class="modal-body" style="width:min(520px,92vw)">
+    <h2 style="margin-top:0">과목/학급 관리</h2>
+    <p class="muted">시험과 과제를 과목(또는 학급)별로 나눠 보기 위한 구분입니다. 저장 파일은 하나이고, 학생 명단은 공통입니다.</p>
+    <div class="row">
+      <input id="subject-new-name" type="text" placeholder="예: 2-3 과학, 1학년 사회" style="flex:1">
+      <button id="btn-subject-add" class="primary">추가</button>
+    </div>
+    <div id="subject-list" style="margin-top:12px"></div>
+    <div class="toolbar"><span class="sep"></span><button id="btn-subject-close">닫기</button></div>
   </div>
 </div>
 

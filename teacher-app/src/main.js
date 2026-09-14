@@ -5,6 +5,7 @@ import { DEFAULT_HTTP_PORT } from '../../shared/src/constants.js';
 import { enableUtf8Console } from '../../shared/src/winConsole.js';
 
 enableUtf8Console();
+app.setName('교실 평가 시스템'); // 대화창·오류창 제목에 실행 파일 이름 대신 표시
 
 let server = null;
 let win = null;

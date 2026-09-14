@@ -257,6 +257,36 @@ export async function verifyApiKey(apiKey, fetchImpl = fetch) {
   return { label: d.label ?? '', usage: d.usage ?? null, limit: d.limit ?? null, limitRemaining: d.limit_remaining ?? null };
 }
 
+// OpenRouter 모델 목록 (채점에 쓸 수 있는 텍스트 모델만). 최신순 정렬.
+export async function fetchModelList(fetchImpl = fetch, apiKey = '') {
+  const res = await fetchImpl('https://openrouter.ai/api/v1/models', {
+    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+  });
+  if (!res.ok) throw new Error(`OpenRouter 응답 ${res.status}`);
+  const json = await res.json();
+  const raw = Array.isArray(json.data) ? json.data : [];
+  const price = (v) => (v == null ? null : Math.round(Number(v) * 1e6 * 100) / 100); // $/1M tokens
+  return raw
+    .filter((m) => {
+      const mods = m.architecture?.output_modalities ?? ['text'];
+      const inputs = m.architecture?.input_modalities ?? ['text'];
+      return mods.includes('text') && inputs.includes('text') && !/embed|moderation|whisper|tts|image-gen/i.test(m.id);
+    })
+    .map((m) => ({
+      id: m.id,
+      name: m.name ?? m.id,
+      provider: String(m.id).split('/')[0],
+      created: m.created ?? 0,
+      contextLength: m.context_length ?? null,
+      promptPrice: price(m.pricing?.prompt),
+      completionPrice: price(m.pricing?.completion),
+      supportsImage: (m.architecture?.input_modalities ?? []).includes('image'),
+      supportsFile: (m.architecture?.input_modalities ?? []).includes('file'),
+      structured: Array.isArray(m.supported_parameters) ? m.supported_parameters.includes('structured_outputs') : null,
+    }))
+    .sort((a, b) => b.created - a.created);
+}
+
 // ── 서비스 ─────────────────────────────
 
 export function createAiGrader({ db, io, examService, fetchImpl = fetch }) {

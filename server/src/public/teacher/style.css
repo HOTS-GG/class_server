@@ -10,8 +10,27 @@ header h1 { font-size: 18px; margin: 0; }
 
 nav#tabs {
   display: flex; gap: 4px; padding: 8px 24px 0; background: var(--bg-1);
-  border-bottom: 1px solid var(--bd-1);
+  border-bottom: 1px solid var(--bd-1); align-items: flex-end;
 }
+.subject-bar { display: flex; align-items: center; gap: 6px; padding: 0 0 8px; }
+.subject-bar select { min-width: 160px; padding: 5px 8px; font-size: 13px; }
+.subject-tag {
+  display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; color: #fff; white-space: nowrap;
+}
+.scale-ctl { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+.scale-ctl select { padding: 4px 6px; font-size: 13px; }
+.code-cell button.code-btn {
+  font-family: Consolas, "Courier New", monospace; font-size: 18px; font-weight: 700; letter-spacing: 3px;
+  padding: 4px 12px; color: var(--accent-text); background: var(--accent-bg); border-color: var(--accent-border);
+}
+.code-modal-body { text-align: center; width: min(560px, 92vw); }
+.code-huge {
+  font-family: Consolas, "Courier New", monospace; font-size: 88px; font-weight: 800; letter-spacing: 14px;
+  color: var(--accent-text); margin: 12px 0; line-height: 1.1; word-break: break-all;
+}
+#code-modal-student { font-size: 22px; font-weight: 700; color: var(--tx-1); }
+.subject-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--bd-soft); }
+.subject-row input[type=text] { flex: 1; }
 nav#tabs button {
   border: none; padding: 10px 20px; cursor: pointer; font-size: 14px;
   background: transparent; color: var(--tx-3); border-radius: 8px 8px 0 0;

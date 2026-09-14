@@ -1,5 +1,6 @@
-/* global io */
+/* global io, csDialog */
 // 학생 클라이언트 렌더러
+// 브라우저 기본 alert/confirm은 Electron에서 창 제목에 exe 이름이 뜨고 닫힌 뒤 입력칸 포커스가 풀리므로 csDialog만 사용한다.
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -22,6 +23,9 @@ let serverOffset = 0;
 let timerHandle = null;
 let examLocked = false;
 let viewingResultExamId = null;
+let lastSavedAt = null;
+let serverHealth = null;
+const inExamScreen = () => $('#screen-exam').classList.contains('active');
 
 const ATTACH_HELP = 'PDF · PNG/JPG/WEBP 이미지 · TXT/MD 파일, 10MB 이하. 컴퓨터로 작성한 파일만 첨부하세요. 종이에 쓴 답안을 사진·스캔한 파일은 정확히 채점되지 않습니다.';
 
@@ -106,12 +110,71 @@ async function afterLogin() {
   await loadSocketIo();
   connectSocket();
   const hasExam = await checkActiveExam();
-  if (!hasExam) {
-    showScreen('screen-home');
-    loadAssignments();
-    loadResults();
-  }
+  if (!hasExam) goHome();
 }
+
+// 홈 화면(과제/시험 탭)으로 이동하며 목록 갱신
+function goHome() {
+  showScreen('screen-home');
+  loadAssignments();
+  loadResults();
+  renderExamTab();
+}
+
+// ── 홈 탭 (과제 / 시험) ─────────────────────────────
+$$('.home-tabs button').forEach((btn) => btn.addEventListener('click', () => {
+  $$('.home-tabs button').forEach((b) => b.classList.toggle('active', b === btn));
+  $$('.home-tab').forEach((t) => t.classList.toggle('active', t.id === `home-${btn.dataset.homeTab}`));
+  if (btn.dataset.homeTab === 'exams') { loadResults(); renderExamTab(); }
+  else loadAssignments();
+}));
+
+// 시험 탭 상단: 진행 중 시험 상태 카드
+async function renderExamTab() {
+  const box = $('#exam-active-card');
+  try {
+    const data = await api('GET', '/api/student/exams/active');
+    if (!data.exam) { box.innerHTML = ''; return; }
+    if (data.submitted) {
+      box.innerHTML = `<div class="notice info">📝 <b>${esc(data.exam.title)}</b> — 제출 완료. 시험이 끝나고 선생님이 성적을 공개하면 아래에 결과가 나타납니다.</div>`;
+    } else {
+      box.innerHTML = `<div class="notice">📝 <b>${esc(data.exam.title)}</b> 진행 중 <span class="sep"></span><button class="primary" id="btn-enter-exam">시험 화면으로</button></div>`;
+      $('#btn-enter-exam').addEventListener('click', () => checkActiveExam());
+    }
+  } catch { box.innerHTML = ''; }
+}
+
+// ── 연결 상태 창 ─────────────────────────────
+async function renderConnModal() {
+  const rows = [];
+  const ok = (b) => (b ? '<span class="pill on">정상</span>' : '<span class="pill off">끊김</span>');
+  rows.push(['서버 주소', esc(serverUrl)]);
+  rows.push(['내 정보', `${esc(student?.number)}번 ${esc(student?.name)}`]);
+  rows.push(['실시간 연결(소켓)', `${ok(socket?.connected)} ${socket?.connected ? esc(socket.io.engine.transport.name) : '재연결 시도 중'}`]);
+  let reach = null; let ms = null;
+  try {
+    const t0 = performance.now();
+    serverHealth = await fetch(`${serverUrl}/api/health`).then((r) => r.json());
+    ms = Math.round(performance.now() - t0);
+    reach = true;
+    serverOffset = serverHealth.serverNow - Date.now();
+  } catch { reach = false; }
+  rows.push(['서버 응답', reach ? `${ok(true)} ${ms}ms` : ok(false)]);
+  if (serverHealth) {
+    rows.push(['서버 이름', esc(serverHealth.name)]);
+    rows.push(['서버 버전', esc(serverHealth.version)]);
+    rows.push(['시계 차이', `${Math.round(serverOffset / 1000)}초 (서버 기준으로 타이머 보정)`]);
+  }
+  rows.push(['마지막 답안 저장', lastSavedAt ? new Date(lastSavedAt).toLocaleTimeString('ko-KR', { hour12: false }) : '—']);
+  rows.push(['시험 잠금', examLocked ? '잠금 중 (전체화면)' : '없음']);
+  $('#conn-table').innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+}
+$('#conn-status').addEventListener('click', async () => {
+  $('#conn-modal').classList.remove('hidden');
+  await renderConnModal();
+});
+$('#btn-conn-refresh').addEventListener('click', renderConnModal);
+$('#btn-conn-close').addEventListener('click', () => $('#conn-modal').classList.add('hidden'));
 
 // socket.io 클라이언트는 서버에서 로드 (별도 번들 불필요)
 function loadSocketIo() {
@@ -133,8 +196,8 @@ function connectSocket() {
     $('#conn-status').textContent = '연결됨';
     $('#conn-status').classList.remove('off');
     $('#conn-status').classList.add('on');
-    // 재접속 시 진행 중 시험 복구
-    if (!examLocked) await checkActiveExam();
+    // 재접속 시 진행 중 시험 복구 / 끊긴 사이에 끝난 시험 정리
+    await checkActiveExam();
   });
 
   socket.on('disconnect', () => {
@@ -146,8 +209,10 @@ function connectSocket() {
 
   socket.on('exam:started', () => checkActiveExam());
 
+  // 교사 종료/시간 종료: 잠금 여부와 관계없이 시험 화면에 있으면 종료 화면으로
   socket.on('exam:ended', () => {
-    if (examLocked) endExamScreen('시험이 종료되었습니다', '답안이 제출되었습니다. 수고했어요!');
+    if (inExamScreen()) endExamScreen('시험이 종료되었습니다', '답안이 제출되었습니다. 수고했어요!');
+    else renderExamTab();
   });
 
   socket.on('assignment:published', (ev) => {
@@ -160,8 +225,8 @@ function connectSocket() {
   });
 
   socket.on('exam:results-published', (ev) => {
-    toast(`📊 "${ev.title}" 성적이 공개되었습니다. 홈 화면에서 확인하세요.`);
-    if ($('#screen-home').classList.contains('active')) loadResults();
+    toast(`📊 "${ev.title}" 성적이 공개되었습니다. [시험] 탭에서 확인하세요.`);
+    if ($('#screen-home').classList.contains('active')) { loadResults(); renderExamTab(); }
   });
 
   // 서술형 채점(AI 반영/교사 채점)으로 점수·피드백이 바뀌면 화면 갱신
@@ -173,8 +238,8 @@ function connectSocket() {
     }
   });
 
-  socket.on('session:kicked', (ev) => {
-    alert(ev.reason ?? '다른 자리에서 접속되었습니다.');
+  socket.on('session:kicked', async (ev) => {
+    await csDialog.alert(ev.reason ?? '다른 자리에서 접속되었습니다.', { title: '접속 종료' });
     localStorage.removeItem('cs_token');
     location.reload();
   });
@@ -200,9 +265,10 @@ window.classClient.onBlocked(({ event, meta }) => reportFocus(event, meta));
 async function loadAssignments() {
   try {
     const list = await api('GET', '/api/student/assignments');
+    $('#asg-count').textContent = list.filter((a) => a.status === 'published' && !a.mySubmission).length || '';
     $('#assignment-list').innerHTML = list.length ? list.map((a) => `
       <div class="asg-card" data-id="${a.id}">
-        <div class="title">${esc(a.title)}
+        <div class="title">${a.subjectName ? `<span class="pill">${esc(a.subjectName)}</span> ` : ''}${esc(a.title)}
           ${a.status === 'closed' ? '<span class="muted">(마감)</span>' : ''}</div>
         ${a.description ? `<div class="desc">${esc(a.description)}</div>` : ''}
         <div class="files">${a.files.map((f) =>
@@ -258,11 +324,12 @@ $('#assignment-list').addEventListener('click', async (e) => {
 async function loadResults() {
   try {
     const list = await api('GET', '/api/student/exams/results');
-    $('#results-section').classList.toggle('hidden', !list.length);
+    $('#exam-count').textContent = list.length || '';
+    if (!list.length) { $('#result-list').innerHTML = '<p class="muted">공개된 시험 결과가 없습니다.</p>'; return; }
     $('#result-list').innerHTML = list.map((r) => {
       const pending = r.essayTotal > r.essayGraded;
       return `<div class="result-card">
-        <span class="title">${esc(r.title)}</span>
+        <span class="title">${r.subjectName ? `<span class="pill">${esc(r.subjectName)}</span> ` : ''}${esc(r.title)}</span>
         ${pending ? `<span class="pill warn">서술형 채점 중 (${r.essayGraded}/${r.essayTotal})</span>` : ''}
         <span class="score">${r.total ?? '-'} / ${r.maxTotal ?? '-'}점</span>
         <button class="small" data-result="${r.examId}">자세히 보기</button>
@@ -315,6 +382,8 @@ async function openResult(examId, silent = false) {
 $('#btn-result-back').addEventListener('click', () => {
   viewingResultExamId = null;
   showScreen('screen-home');
+  $$('.home-tabs button').forEach((b) => b.classList.toggle('active', b.dataset.homeTab === 'exams'));
+  $$('.home-tab').forEach((t) => t.classList.toggle('active', t.id === 'home-exams'));
   loadResults();
 });
 
@@ -323,15 +392,23 @@ async function checkActiveExam() {
   try {
     const data = await api('GET', '/api/student/exams/active');
     if (!data.exam || data.submitted) {
-      if (examLocked) {
+      if (inExamScreen()) {
+        // 연결이 끊긴 사이에 시험이 끝났거나(교사 종료·시간 종료) 이미 제출 처리된 경우
+        await endExamScreen('시험이 종료되었습니다', '답안이 제출되었습니다. 수고했어요!');
+      } else if (examLocked) {
         // 시험이 이미 끝났는데 잠금 상태로 남아있으면 해제
         await window.classClient.unlock();
         examLocked = false;
       }
       return false;
     }
-    examData = data;
     serverOffset = data.serverNow - Date.now();
+    if (inExamScreen() && examData?.exam?.id === data.exam.id) {
+      // 재접속: 작성 중인 화면을 다시 그리지 않고 종료 시각만 동기화
+      examData.exam.endsAt = data.exam.endsAt;
+      return true;
+    }
+    examData = data;
     await enterExam();
     return true;
   } catch {
@@ -437,7 +514,7 @@ $('#exam-questions').addEventListener('click', async (e) => {
       examData.answers[qid] = { ...(examData.answers[qid] ?? { text: '' }), file: r.file, savedAt: r.savedAt };
       toast(`첨부했습니다: ${file.name}`);
     } else {
-      if (!confirm('첨부 파일을 삭제할까요?')) { btn.disabled = false; return; }
+      if (!await csDialog.confirm('첨부 파일을 삭제할까요?', { title: '첨부 삭제', danger: true, okText: '삭제' })) { btn.disabled = false; return; }
       r = await api('POST', `/api/student/exams/${examData.exam.id}/answer-file/remove`, { questionId: qid });
       const cur = { ...(examData.answers[qid] ?? { text: '' }), savedAt: r.savedAt };
       delete cur.file;
@@ -447,6 +524,7 @@ $('#exam-questions').addEventListener('click', async (e) => {
     // 텍스트는 그대로 두고 첨부 영역만 다시 그림
     const row = $(`#exam-questions [data-attach="${qid}"]`);
     if (row) row.outerHTML = attachRow(q, examData.answers[qid]);
+    lastSavedAt = r.savedAt;
     $('#save-status').textContent = `저장됨 ${new Date(r.savedAt).toLocaleTimeString('ko-KR', { hour12: false })}`;
     renderProgressNav();
   } catch (err) {
@@ -509,6 +587,7 @@ function saveAnswer(questionId, answer) {
   renderProgressNav();
   const payload = { examId: examData.exam.id, questionId, answer };
   const onSaved = (savedAt) => {
+    lastSavedAt = savedAt;
     $('#save-status').textContent = `저장됨 ${new Date(savedAt).toLocaleTimeString('ko-KR', { hour12: false })}`;
   };
   if (socket?.connected) {
@@ -543,7 +622,7 @@ async function submitExam() {
   const total = examData.questions.length;
   const answered = examData.questions.filter(isAnswered).length;
   const warn = answered < total ? `\n(아직 안 푼 문제가 ${total - answered}개 있습니다!)` : '';
-  if (!confirm(`시험을 제출할까요? 제출 후에는 수정할 수 없습니다.${warn}`)) return;
+  if (!await csDialog.confirm(`시험을 제출할까요? 제출 후에는 수정할 수 없습니다.${warn}`, { title: '시험 제출', okText: '제출' })) return;
 
   const instant = examData.exam.instantResults === true;
   const done = () => endExamScreen('제출 완료',
@@ -574,9 +653,9 @@ async function endExamScreen(title, msg) {
 }
 
 $('#btn-done-home').addEventListener('click', () => {
-  showScreen('screen-home');
-  loadAssignments();
-  loadResults();
+  goHome();
+  $$('.home-tabs button').forEach((b) => b.classList.toggle('active', b.dataset.homeTab === 'exams'));
+  $$('.home-tab').forEach((t) => t.classList.toggle('active', t.id === 'home-exams'));
 });
 
 // ── 종료/잠금 해제 ─────────────────────────────

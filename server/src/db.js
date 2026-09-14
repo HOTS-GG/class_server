@@ -6,6 +6,7 @@ import { JSONFile } from 'lowdb/node';
 
 const DEFAULT_DATA = {
   students: [],
+  subjects: [],      // 과목/학급 구분: { id, name, color, createdAt } — 시험·과제에 subjectId로 연결
   assignments: [],
   submissions: [],
   exams: [],

@@ -35,10 +35,14 @@ export function studentsRouter({ db, presence }) {
 
   r.post('/', (req, res) => {
     const { number, name } = req.body ?? {};
-    if (!name || !Number.isFinite(Number(number))) {
-      return res.status(400).json({ error: '출석번호(숫자)와 이름이 필요합니다.' });
+    const n = Number(String(number ?? '').trim());
+    if (!String(name ?? '').trim() || !Number.isInteger(n) || n < 1 || n > 999) {
+      return res.status(400).json({ error: '출석번호는 1~999 사이의 정수, 이름은 비어 있을 수 없습니다.' });
     }
-    const stu = addStudent(number, name);
+    if (db.data.students.some((s) => s.active && s.number === n)) {
+      return res.status(400).json({ error: `${n}번은 이미 등록되어 있습니다.` });
+    }
+    const stu = addStudent(n, name);
     db.scheduleFlush();
     res.json(stu);
   });
@@ -56,7 +60,7 @@ export function studentsRouter({ db, presence }) {
       const [numRaw, nameRaw] = row;
       const number = Number(String(numRaw).trim());
       const name = String(nameRaw ?? '').trim();
-      if (!Number.isFinite(number) || !name) { skipped.push(row.join(',')); continue; }
+      if (!Number.isInteger(number) || number < 1 || number > 999 || !name) { skipped.push(row.join(',')); continue; }
       if (db.data.students.some((s) => s.active && s.number === number && s.name === name)) {
         skipped.push(`${number},${name} (중복)`);
         continue;

@@ -194,6 +194,7 @@ export function createExamService(db, io) {
       exam: {
         id: exam.id,
         title: exam.title,
+        subjectName: db.data.subjects?.find((s) => s.id === exam.subjectId)?.name ?? null,
         durationSec: exam.durationSec,
         startedAt: exam.startedAt,
         endsAt: exam.endsAt,
@@ -241,7 +242,7 @@ export function createExamService(db, io) {
     const essayTotal = exam.questions.filter((q) => q.type === 'essay').length;
     const essayGraded = exam.questions.filter((q) => q.type === 'essay' && detail.perQuestion?.[q.id] != null).length;
     return {
-      exam: { id: exam.id, title: exam.title },
+      exam: { id: exam.id, title: exam.title, subjectName: db.data.subjects?.find((s) => s.id === exam.subjectId)?.name ?? null },
       submittedAt: attempt.submittedAt,
       total: attempt.score,
       maxTotal: detail.maxTotal,

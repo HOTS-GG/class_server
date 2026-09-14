@@ -6,6 +6,7 @@ import { toCsv } from '../../../shared/src/csv.js';
 import { newId } from '../../../shared/src/id.js';
 import { parseExamExcel, buildTemplateExcel, buildResultsExcel } from '../services/excelImport.js';
 import { ANSWER_FILE_TYPES, ANSWER_FILE_MAX_BYTES, ANSWER_FILE_EXT_LABEL } from '../services/aiGradingService.js';
+import { subjectNameOf, validSubjectId } from './subjects.js';
 
 const FORBIDDEN_CHARS = /[\\/:*?"<>|]/g;
 const sanitizeName = (name) => String(name).split('').filter((ch) => ch.charCodeAt(0) >= 32).join('')
@@ -114,6 +115,7 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
   teacher.get('/', (req, res) => {
     res.json(db.data.exams.map((e) => ({
       id: e.id, title: e.title, status: e.status,
+      subjectId: e.subjectId ?? null, subjectName: subjectNameOf(db, e.subjectId),
       questionCount: e.questions.length,
       essayCount: e.questions.filter((q) => q.type === 'essay').length,
       totalPoints: e.questions.reduce((s, q) => s + q.points, 0),
@@ -154,12 +156,13 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
 
   teacher.post('/', (req, res) => {
     try {
-      const { title, shuffleQuestions, shuffleChoices, questions, durationMin, instantResults } = req.body ?? {};
+      const { title, shuffleQuestions, shuffleChoices, questions, durationMin, instantResults, subjectId } = req.body ?? {};
       if (!title?.trim()) return res.status(400).json({ error: '시험 제목이 필요합니다.' });
       const exam = {
         id: newId('ex'),
         title: title.trim(),
         status: 'draft',
+        subjectId: validSubjectId(db, subjectId),
         shuffleQuestions: shuffleQuestions !== false,
         shuffleChoices: shuffleChoices !== false,
         instantResults: instantResults === true,
@@ -180,8 +183,9 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
       const e = examService.findExam(req.params.id);
       if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
       if (e.status !== 'draft') return res.status(400).json({ error: '시작 전(초안) 시험만 수정할 수 있습니다.' });
-      const { title, shuffleQuestions, shuffleChoices, questions, durationMin, instantResults } = req.body ?? {};
+      const { title, shuffleQuestions, shuffleChoices, questions, durationMin, instantResults, subjectId } = req.body ?? {};
       if (title?.trim()) e.title = title.trim();
+      if (subjectId !== undefined) e.subjectId = validSubjectId(db, subjectId);
       if (shuffleQuestions !== undefined) e.shuffleQuestions = !!shuffleQuestions;
       if (shuffleChoices !== undefined) e.shuffleChoices = !!shuffleChoices;
       if (instantResults !== undefined) e.instantResults = instantResults === true;
@@ -215,6 +219,7 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
       id: newId('ex'),
       title: `${e.title} (재시험)`,
       status: 'draft',
+      subjectId: e.subjectId,
       shuffleQuestions: e.shuffleQuestions,
       shuffleChoices: e.shuffleChoices,
       instantResults: e.instantResults === true,
@@ -457,6 +462,7 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
         return {
           examId: e.id,
           title: e.title,
+          subjectName: subjectNameOf(db, e.subjectId),
           submittedAt: att.submittedAt,
           total: att.score,
           maxTotal: att.scoreDetail?.maxTotal ?? null,

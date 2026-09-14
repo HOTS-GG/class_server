@@ -13,8 +13,9 @@ import { makeAuth } from './auth.js';
 import { createPresence } from './services/presenceService.js';
 import { createExamService } from './services/examService.js';
 import {
-  createAiGrader, verifyApiKey, AI_MODEL_PRESETS, DEFAULT_AI_MODEL, DEFAULT_PDF_ENGINE,
+  createAiGrader, verifyApiKey, fetchModelList, AI_MODEL_PRESETS, DEFAULT_AI_MODEL, DEFAULT_PDF_ENGINE,
 } from './services/aiGradingService.js';
+import { subjectsRouter } from './routes/subjects.js';
 import { startDiscovery } from './services/discovery.js';
 import { attachSockets } from './sockets/index.js';
 import { studentsRouter } from './routes/students.js';
@@ -164,6 +165,22 @@ export async function createClassServer({
     res.json({ ok: true, ...aiSettingsView() });
   });
 
+  // OpenRouter 모델 목록 동기화 (최신 모델을 고를 수 있도록). 1시간 메모리 캐시.
+  let modelCache = { at: 0, list: [] };
+  app.get('/api/teacher/ai-settings/models', auth.teacherMiddleware, async (req, res) => {
+    const force = req.query.refresh === '1';
+    if (!force && modelCache.list.length && Date.now() - modelCache.at < 60 * 60 * 1000) {
+      return res.json({ ok: true, cached: true, fetchedAt: modelCache.at, models: modelCache.list });
+    }
+    try {
+      const list = await fetchModelList(aiFetch, String(db.data.settings.ai?.apiKey ?? ''));
+      modelCache = { at: Date.now(), list };
+      res.json({ ok: true, cached: false, fetchedAt: modelCache.at, models: list });
+    } catch (err) {
+      res.status(502).json({ error: `모델 목록을 가져오지 못했습니다: ${err.message}` });
+    }
+  });
+
   // 저장된 키(또는 입력 중인 키)로 OpenRouter 연결 확인
   app.post('/api/teacher/ai-settings/test', auth.teacherMiddleware, async (req, res) => {
     const candidate = String(req.body?.apiKey ?? '').replace(/\s+/g, '') || String(db.data.settings.ai?.apiKey ?? '');
@@ -186,6 +203,7 @@ export async function createClassServer({
   const exams = examRouters({ db, io, presence, examService, aiGrader });
 
   app.use('/api/teacher/students', auth.teacherMiddleware, studentsRouter({ db, presence }));
+  app.use('/api/teacher/subjects', auth.teacherMiddleware, subjectsRouter({ db }));
   app.use('/api/teacher/assignments', auth.teacherMiddleware, assignments.teacher);
   app.use('/api/teacher/exams', auth.teacherMiddleware, exams.teacher);
   app.use('/api/student/assignments', auth.studentMiddleware, assignments.student);
@@ -196,6 +214,7 @@ export async function createClassServer({
   const sharedDir = path.join(__dirname, '..', '..', 'shared');
   app.get('/teacher/theme.css', (req, res) => res.sendFile(path.join(sharedDir, 'theme.css')));
   app.get('/teacher/theme.js', (req, res) => res.sendFile(path.join(sharedDir, 'theme.js')));
+  app.get('/teacher/dialog.js', (req, res) => res.sendFile(path.join(sharedDir, 'dialog.js')));
   app.use('/teacher', express.static(path.join(__dirname, 'public', 'teacher')));
   app.get('/', (req, res) => res.redirect('/teacher/'));
 

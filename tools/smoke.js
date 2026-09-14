@@ -17,6 +17,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 가짜 OpenRouter: 실제 네트워크 없이 AI 채점 흐름을 검증한다.
 const aiCalls = [];
 const fakeOpenRouter = async (url, opts) => {
+  if (url.endsWith('/api/v1/models')) {
+    return { ok: true, status: 200, json: async () => ({ data: [
+      { id: 'anthropic/claude-haiku-4.5', name: 'Claude Haiku 4.5', created: 200, context_length: 200000, pricing: { prompt: '0.000001', completion: '0.000005' }, architecture: { input_modalities: ['text', 'image', 'file'], output_modalities: ['text'] }, supported_parameters: ['structured_outputs'] },
+      { id: 'openai/gpt-5', name: 'GPT-5', created: 300, context_length: 400000, pricing: { prompt: '0.00000125', completion: '0.00001' }, architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] } },
+      { id: 'openai/text-embedding-3', name: 'Embedding', created: 100, architecture: { input_modalities: ['text'], output_modalities: ['embeddings'] } },
+    ] }) };
+  }
   if (url.endsWith('/auth/key')) {
     const ok = opts.headers.Authorization === 'Bearer sk-or-test';
     return { ok, status: ok ? 200 : 401, json: async () => ({ data: { label: '스모크 키', limit: 10, limit_remaining: 9.5 } }) };
@@ -65,9 +72,17 @@ const post = (p, body, token) => fetch(base + p, {
 const health = await get('/api/health');
 check('서버 health', health.ok === true);
 
-const imp = await post('/api/teacher/students/import', { csv: '번호,이름\n1,김민준\n2,이서연\n3,박도윤' });
-check('학생 3명 CSV 등록', imp.addedCount === 3);
+const imp = await post('/api/teacher/students/import', { csv: '번호,이름\n1,김민준\n2,이서연\n3,박도윤\n-4,음수번호\n0,영번호' });
+check('학생 3명 CSV 등록 (음수·0번은 건너뜀)', imp.addedCount === 3 && imp.skipped.some((s) => s.startsWith('-4')) && imp.skipped.some((s) => s.startsWith('0,')));
+const negStu = await post('/api/teacher/students', { number: -1, name: '음수' });
+const dupStu = await post('/api/teacher/students', { number: 1, name: '중복' });
+check('출석번호 음수/중복 등록 거부', !!negStu.error && !!dupStu.error);
 const students = await get('/api/teacher/students');
+
+// ── 과목/학급 ─────────────────────────────
+const subj = await post('/api/teacher/subjects', { name: '2-3 과학' });
+check('과목 생성', !!subj.id && subj.name === '2-3 과학');
+check('과목 이름 중복 거부', !!(await post('/api/teacher/subjects', { name: '2-3 과학' })).error);
 
 const auth1 = await post('/api/auth/student', { code: students[0].code });
 const auth2 = await post('/api/auth/student', { code: students[1].code });
@@ -76,8 +91,10 @@ const bad = await post('/api/auth/student', { code: 'XXXXXX' });
 check('잘못된 코드 거부', !!bad.error);
 
 // ── 과제 배부/제출/회수 ─────────────────────────────
-const asg = await post('/api/teacher/assignments', { title: '테스트 과제' });
-check('과제 생성', asg.status === 'draft');
+const asg = await post('/api/teacher/assignments', { title: '테스트 과제', subjectId: subj.id });
+check('과제 생성 (과목 연결)', asg.status === 'draft' && asg.subjectId === subj.id);
+const asgList = await get('/api/teacher/assignments');
+check('과제 목록에 과목 이름', asgList[0]?.subjectName === '2-3 과학');
 await post(`/api/teacher/assignments/${asg.id}/publish`);
 
 const fd = new FormData();
@@ -95,10 +112,15 @@ check('학생 과제 목록에 제출 반영', myAsg[0]?.mySubmission?.files?.[0
 const zipRes = await fetch(`${base}/api/teacher/assignments/${asg.id}/submissions.zip`);
 const zipBuf = Buffer.from(await zipRes.arrayBuffer());
 check('제출물 zip 회수 (PK 시그니처)', zipBuf[0] === 0x50 && zipBuf[1] === 0x4b);
+const asg2 = await post('/api/teacher/assignments', { title: '삭제될 과제' });
+const delAsg = await fetch(`${base}/api/teacher/assignments/${asg2.id}`, { method: 'DELETE' }).then((r) => r.json());
+check('과제 삭제', delAsg.ok === true && !(await get('/api/teacher/assignments')).some((a) => a.id === asg2.id));
+check('학생 과제 목록에 과목 이름', (await get('/api/student/assignments', auth1.token))[0]?.subjectName === '2-3 과학');
 
 // ── 시험 ─────────────────────────────
 const exam = await post('/api/teacher/exams', {
   title: '수학 쪽지시험',
+  subjectId: subj.id,
   durationMin: 1,
   questions: [
     { type: 'mc', text: '1+1=?', points: 5, choices: ['1', '2', '3', '4'], answerIndex: 1 },
@@ -111,7 +133,8 @@ const exam = await post('/api/teacher/exams', {
     { type: 'essay', text: '보고서를 첨부하고 요약하시오.', points: 20, rubric: '자료 제시 (10점)\n요약 (10점)', allowFile: true },
   ],
 });
-check('시험 생성', exam.status === 'draft');
+check('시험 생성 (과목 연결)', exam.status === 'draft' && exam.subjectId === subj.id);
+check('시험 목록에 과목 이름', (await get('/api/teacher/exams')).find((e) => e.id === exam.id)?.subjectName === '2-3 과학');
 check('서술형 채점 근거(모범답안·채점기준·파일첨부) 저장', exam.questions[6]?.rubric?.includes('(5점)')
   && exam.questions[6]?.modelAnswer === '문제 해결의 성취감' && exam.questions[7]?.allowFile === true);
 await post(`/api/teacher/exams/${exam.id}/start`, { durationMin: 1 });
@@ -202,6 +225,10 @@ const noKey = await post(`/api/teacher/exams/${exam.id}/ai-grade`);
 check('API 키 없이 AI 채점 → 안내 오류', /API 키/.test(noKey.error ?? ''));
 const aiSet0 = await get('/api/teacher/ai-settings');
 check('AI 설정 조회(키 없음, 프리셋 제공)', aiSet0.configured === false && aiSet0.presets?.length > 0);
+const models = await get('/api/teacher/ai-settings/models?refresh=1');
+check('모델 목록 동기화 (텍스트 모델만, 최신순, 임베딩 제외)', models.ok === true && models.models.length === 2
+  && models.models[0].id === 'openai/gpt-5' && models.models[1].promptPrice === 1 && models.models[1].supportsFile === true);
+check('모델 목록 캐시', (await get('/api/teacher/ai-settings/models')).cached === true);
 const badTest = await post('/api/teacher/ai-settings/test', { apiKey: 'sk-or-wrong' });
 check('잘못된 키 연결 테스트 실패', !!badTest.error);
 const goodTest = await post('/api/teacher/ai-settings/test', { apiKey: 'sk-or-test' });
@@ -314,6 +341,10 @@ await fetch(`${base}/api/teacher/exams/${excelExam.id}`, { method: 'DELETE' });
 await post(`/api/teacher/exams/${exam.id}/publish-results`, { published: false });
 const hiddenRes = await get(`/api/student/exams/${exam.id}/result`, auth1.token);
 check('공개 취소 시 학생 조회 차단', !!hiddenRes.error);
+
+// ── 과목 삭제 → 시험은 "과목 없음"으로 남음 ─────────────────────────────
+const delSubj = await fetch(`${base}/api/teacher/subjects/${subj.id}`, { method: 'DELETE' }).then((r) => r.json());
+check('과목 삭제 후 시험 보존', delSubj.ok === true && (await get('/api/teacher/exams')).some((e) => e.id === exam.id && e.subjectName === null));
 
 // ── 복제(재시험)와 삭제 ─────────────────────────────
 const dup = await post(`/api/teacher/exams/${exam.id}/duplicate`);

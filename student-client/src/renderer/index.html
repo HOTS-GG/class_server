@@ -6,13 +6,16 @@
 <link rel="stylesheet" href="../../../shared/theme.css">
 <link rel="stylesheet" href="style.css">
 <script src="../../../shared/theme.js"></script>
+<script src="../../../shared/dialog.js"></script>
 </head>
 <body>
 
 <!-- 접속 화면 -->
 <section id="screen-connect" class="screen active">
   <div class="center-card">
-    <div class="row"><h1>수업 참여하기</h1><span class="sep"></span><button class="theme-toggle" data-theme-toggle title="테마 전환">🌙</button></div>
+    <div class="row"><h1>수업 참여하기</h1><span class="sep"></span>
+      <label class="scale-ctl" title="화면 크기">🔍 <select data-scale-select></select></label>
+      <button class="theme-toggle" data-theme-toggle title="테마 전환">🌙</button></div>
     <label>선생님 컴퓨터 주소
       <div class="row">
         <input id="in-server" type="text" placeholder="예: 192.168.0.10">
@@ -27,21 +30,30 @@
   </div>
 </section>
 
-<!-- 홈(과제) 화면 -->
+<!-- 홈 화면 -->
 <section id="screen-home" class="screen">
   <header>
     <span id="home-student"></span>
-    <span id="conn-status" class="pill on">연결됨</span>
+    <button id="conn-status" class="pill on" title="연결 상태 보기">연결됨</button>
     <span class="sep"></span>
+    <label class="scale-ctl" title="화면 크기">🔍 <select data-scale-select></select></label>
     <button class="theme-toggle" data-theme-toggle title="테마 전환">🌙</button>
     <button id="btn-exit" class="small">종료</button>
   </header>
+  <nav class="home-tabs">
+    <button data-home-tab="assignments" class="active">📁 과제 <span id="asg-count" class="count"></span></button>
+    <button data-home-tab="exams">📝 시험 <span id="exam-count" class="count"></span></button>
+  </nav>
   <div id="exam-notice" class="notice hidden"></div>
-  <h2>과제</h2>
-  <div id="assignment-list"><p class="muted">과제를 불러오는 중...</p></div>
-  <div id="results-section" class="hidden">
+
+  <div id="home-assignments" class="home-tab active">
+    <div id="assignment-list"><p class="muted">과제를 불러오는 중...</p></div>
+  </div>
+
+  <div id="home-exams" class="home-tab">
+    <div id="exam-active-card"></div>
     <h2>시험 결과</h2>
-    <div id="result-list"></div>
+    <div id="result-list"><p class="muted">공개된 시험 결과가 없습니다.</p></div>
   </div>
 </section>
 
@@ -94,6 +106,19 @@
     <div class="row">
       <button id="btn-unlock-ok" class="primary">확인</button>
       <button id="btn-unlock-cancel">취소</button>
+    </div>
+  </div>
+</div>
+
+<!-- 연결 상태 모달 -->
+<div id="conn-modal" class="modal hidden">
+  <div class="modal-body" style="width:min(460px,92vw)">
+    <h2 style="margin-top:0">연결 상태</h2>
+    <table class="conn-table"><tbody id="conn-table"></tbody></table>
+    <div class="row" style="margin-top:12px">
+      <button id="btn-conn-refresh">다시 확인</button>
+      <span class="sep"></span>
+      <button id="btn-conn-close" class="primary">닫기</button>
     </div>
   </div>
 </div>

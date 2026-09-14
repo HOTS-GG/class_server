@@ -223,6 +223,13 @@ a { color: var(--accent-text); }
 .toast.warn { background: var(--clr-warn-text); color: #000; }
 @keyframes fadein { from { opacity: 0; transform: translateY(8px); } }
 
+/* 공용 대화창 (dialog.js) */
+#cs-dialog { z-index: 200; }
+.cs-dialog-body { width: min(440px, 92vw); }
+.cs-dialog-title { font-size: 17px; margin: 0 0 10px; }
+.cs-dialog-msg { white-space: pre-wrap; font-size: 15px; color: var(--tx-1); line-height: 1.55; }
+.cs-dialog-actions { margin-top: 16px; margin-bottom: 0; }
+
 /* 테마 전환 버튼 */
 .theme-toggle {
   width: 34px; height: 34px; padding: 0; border-radius: 50%; font-size: 16px; line-height: 1;
