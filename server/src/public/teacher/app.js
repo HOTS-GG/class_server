@@ -50,6 +50,7 @@ const fmtDur = (ms) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const hasVal = (v) => v !== undefined && v !== null && v !== '';
 
 // ── 탭 ─────────────────────────────
 $$('#tabs button').forEach((btn) => btn.addEventListener('click', () => {
@@ -58,7 +59,7 @@ $$('#tabs button').forEach((btn) => btn.addEventListener('click', () => {
   if (btn.dataset.tab === 'students') loadStudents();
   if (btn.dataset.tab === 'assignments') loadAssignments();
   if (btn.dataset.tab === 'exams') loadExams();
-  if (btn.dataset.tab === 'tools') loadServerInfo();
+  if (btn.dataset.tab === 'tools') { loadServerInfo(); loadAiSettings(); }
 }));
 
 // ── 서버 정보 ─────────────────────────────
@@ -75,6 +76,80 @@ async function loadServerInfo() {
       `접속 주소   :\n${info.addresses.map((a) => `  - ${a}:${info.httpPort}`).join('\n')}`;
   } catch (err) { toast(err.message, 'warn'); }
 }
+
+// ── AI 채점 설정 ─────────────────────────────
+let aiSettings = null;
+
+async function loadAiSettings() {
+  try {
+    aiSettings = await api('GET', '/api/teacher/ai-settings');
+    const sel = $('#ai-model-select');
+    const presetValues = aiSettings.presets.map((p) => p.value);
+    sel.innerHTML = aiSettings.presets.map((p) => `<option value="${esc(p.value)}">${esc(p.label)}</option>`).join('')
+      + '<option value="__custom__">직접 입력…</option>';
+    if (presetValues.includes(aiSettings.model)) {
+      sel.value = aiSettings.model;
+      $('#ai-model-custom').classList.add('hidden');
+    } else {
+      sel.value = '__custom__';
+      $('#ai-model-custom').value = aiSettings.model;
+      $('#ai-model-custom').classList.remove('hidden');
+    }
+    $('#ai-pdf-engine').value = aiSettings.pdfEngine;
+    $('#ai-key').value = '';
+    $('#ai-key').placeholder = aiSettings.configured ? '저장된 키 유지 (바꾸려면 새 키 입력)' : 'sk-or-v1-...';
+    $('#ai-key-hint').textContent = aiSettings.configured
+      ? `저장됨: ${aiSettings.keyHint} (${aiSettings.keyLength}자)` : '저장된 키 없음 — 서술형 AI 채점을 쓰려면 입력하세요.';
+    $('#ai-test-result').textContent = '';
+  } catch (err) { toast(err.message, 'warn'); }
+}
+
+$('#ai-model-select').addEventListener('change', () => {
+  $('#ai-model-custom').classList.toggle('hidden', $('#ai-model-select').value !== '__custom__');
+});
+$('#btn-ai-key-show').addEventListener('click', () => {
+  const inp = $('#ai-key');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+  $('#btn-ai-key-show').textContent = inp.type === 'password' ? '보기' : '숨기기';
+});
+
+const selectedModel = () => {
+  const v = $('#ai-model-select').value;
+  return v === '__custom__' ? $('#ai-model-custom').value.trim() : v;
+};
+
+$('#btn-ai-save').addEventListener('click', async () => {
+  const model = selectedModel();
+  if (!model) { toast('모델을 선택하거나 입력하세요.', 'warn'); return; }
+  try {
+    await api('PUT', '/api/teacher/ai-settings', {
+      apiKey: $('#ai-key').value, model, pdfEngine: $('#ai-pdf-engine').value,
+    });
+    toast('AI 채점 설정을 저장했습니다.');
+    await loadAiSettings();
+  } catch (err) { toast(err.message, 'warn'); }
+});
+
+$('#btn-ai-test').addEventListener('click', async () => {
+  $('#ai-test-result').textContent = '확인 중...';
+  try {
+    const r = await api('POST', '/api/teacher/ai-settings/test', { apiKey: $('#ai-key').value });
+    const parts = ['✅ 연결 성공'];
+    if (r.label) parts.push(`키 이름: ${r.label}`);
+    if (r.limit != null) parts.push(`한도: $${r.limit}${r.limitRemaining != null ? ` (남음 $${r.limitRemaining})` : ''}`);
+    else if (r.usage != null) parts.push(`사용량: $${r.usage}`);
+    $('#ai-test-result').textContent = parts.join(' · ');
+  } catch (err) { $('#ai-test-result').textContent = `❌ ${err.message}`; }
+});
+
+$('#btn-ai-clear').addEventListener('click', async () => {
+  if (!confirm('저장된 API 키를 삭제할까요? AI 채점을 다시 쓰려면 키를 다시 입력해야 합니다.')) return;
+  try {
+    await api('PUT', '/api/teacher/ai-settings', { clearKey: true });
+    toast('API 키를 삭제했습니다.');
+    await loadAiSettings();
+  } catch (err) { toast(err.message, 'warn'); }
+});
 
 // ── 학생 명단 ─────────────────────────────
 async function loadStudents() {
@@ -264,8 +339,9 @@ async function loadExams() {
   $('#exam-list').innerHTML = list.length ? list.map((e) => `
     <div class="exam-item">
       <span class="title">${esc(e.title)}</span>
-      <span class="muted">${e.questionCount}문항 · ${e.totalPoints}점 · ${e.durationMin ?? Math.round((e.durationSec ?? 1800) / 60)}분</span>
+      <span class="muted">${e.questionCount}문항${e.essayCount ? ` (서술형 ${e.essayCount})` : ''} · ${e.totalPoints}점 · ${e.durationMin ?? Math.round((e.durationSec ?? 1800) / 60)}분</span>
       <span class="status-pill ${e.status}">${label[e.status]}</span>
+      ${e.instantResults ? '<span class="status-pill" title="시험 종료 즉시 학생에게 성적 공개">즉시 공개</span>' : ''}
       ${e.resultsPublished ? '<span class="status-pill published">성적 공개됨</span>' : ''}
       ${e.status === 'draft' ? `
         <button class="small" data-act="edit" data-id="${e.id}">수정</button>
@@ -282,7 +358,7 @@ async function loadExams() {
     try {
       if (btn.dataset.act === 'edit') await openExamEditor(id);
       else if (btn.dataset.act === 'del') {
-        if (!confirm('시험을 삭제할까요?\n(종료된 시험은 학생 응시 기록과 점수도 함께 삭제됩니다. 필요하면 결과 CSV를 먼저 내려받으세요.)')) return;
+        if (!confirm('시험을 삭제할까요?\n(종료된 시험은 학생 응시 기록과 점수도 함께 삭제됩니다. 필요하면 결과 파일을 먼저 내려받으세요.)')) return;
         await api('DELETE', `/api/teacher/exams/${id}`);
         toast('시험을 삭제했습니다.');
         await loadExams();
@@ -320,6 +396,7 @@ function questionCard(q, idx) {
       <b>${idx + 1}번</b>
       <span class="status-pill">${Q_TYPE_KO[q.type]}</span>
       <label>배점 <input type="number" value="${q.points}" style="width:60px" data-q="${idx}" data-role="points"></label>
+      ${q.type === 'essay' ? `<label title="학생이 답안에 PDF/이미지/텍스트 파일을 첨부할 수 있게 합니다. 파일 내용도 AI가 요약·채점합니다."><input type="checkbox" ${q.allowFile ? 'checked' : ''} data-q="${idx}" data-role="allow-file"> 파일 첨부 허용</label>` : ''}
       <span class="sep"></span>
       <button class="small" data-role="del-q" data-q="${idx}">문항 삭제</button>
     </div>
@@ -334,6 +411,12 @@ function questionCard(q, idx) {
           placeholder="예: H2O; 에이치투오  (여러 개면 ; 로 구분)">
       </div>
       <div class="muted">공백·대소문자는 무시하고 자동 채점됩니다. 채점 후 감독 화면에서 수동 정정도 가능합니다.</div>` : ''}
+    ${q.type === 'essay' ? `
+      <div class="field"><span>모범답안 <span class="muted">(AI 채점 기준 — 학생에게는 보이지 않음)</span></span>
+        <textarea data-q="${idx}" data-role="model-answer" placeholder="이 문항의 예시 답안">${esc(q.modelAnswer ?? '')}</textarea></div>
+      <div class="field"><span>채점기준 <span class="muted">(줄마다 한 항목, "항목 (n점)" 형태 권장 — 항목 점수의 합 = 배점)</span></span>
+        <textarea data-q="${idx}" data-role="rubric" placeholder="예)\n핵심 개념을 정확히 설명 (4점)\n구체적인 예시 제시 (3점)\n논리적 구성 (3점)">${esc(q.rubric ?? '')}</textarea></div>
+      <div class="muted">${(q.modelAnswer ?? '').trim() || (q.rubric ?? '').trim() ? 'AI 채점 초안을 만들 수 있습니다. 최종 점수는 교사가 확인 후 반영합니다.' : '⚠ 모범답안·채점기준이 없으면 AI 채점 정확도가 크게 떨어집니다.'}</div>` : ''}
   </div>`;
 }
 
@@ -351,11 +434,15 @@ $('#question-editor').addEventListener('input', (e) => {
   else if (t.dataset.role === 'points') q.points = Number(t.value);
   else if (t.dataset.role === 'choice') q.choices[Number(t.dataset.c)] = t.value;
   else if (t.dataset.role === 'accepted') q.acceptedAnswers = t.value;
+  else if (t.dataset.role === 'model-answer') q.modelAnswer = t.value;
+  else if (t.dataset.role === 'rubric') q.rubric = t.value;
 });
 $('#question-editor').addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.role === 'answer') {
     editQuestions[Number(t.dataset.q)].answerIndex = Number(t.dataset.c);
+  } else if (t.dataset.role === 'allow-file') {
+    editQuestions[Number(t.dataset.q)].allowFile = t.checked;
   }
 });
 $('#question-editor').addEventListener('click', (e) => {
@@ -381,9 +468,21 @@ $('#btn-add-short').addEventListener('click', () => {
   renderQuestionEditor();
 });
 $('#btn-add-essay').addEventListener('click', () => {
-  editQuestions.push({ type: 'essay', text: '', points: 10 });
+  editQuestions.push({ type: 'essay', text: '', points: 10, modelAnswer: '', rubric: '', allowFile: false });
   renderQuestionEditor();
 });
+
+function showEditor(title, exam = null) {
+  $('#exam-editor-title').textContent = title;
+  $('#ex-title').value = exam?.title ?? '';
+  $('#ex-duration').value = exam?.durationMin ?? 30;
+  $('#ex-shuffle-q').checked = exam ? exam.shuffleQuestions : true;
+  $('#ex-shuffle-c').checked = exam ? exam.shuffleChoices : true;
+  $('#ex-instant').checked = exam?.instantResults === true;
+  renderQuestionEditor();
+  $('#exam-list-view').classList.add('hidden');
+  $('#exam-editor').classList.remove('hidden');
+}
 
 // ── 엑셀 문제 가져오기 ─────────────────────────────
 $('#btn-import-excel').addEventListener('click', () => $('#excel-file').click());
@@ -404,14 +503,8 @@ $('#excel-file').addEventListener('change', async (e) => {
       ...q,
       acceptedAnswers: Array.isArray(q.acceptedAnswers) ? q.acceptedAnswers.join('; ') : q.acceptedAnswers,
     }));
-    $('#exam-editor-title').textContent = '엑셀에서 가져온 시험 (검토 후 저장)';
+    showEditor('엑셀에서 가져온 시험 (검토 후 저장)');
     $('#ex-title').value = file.name.replace(/\.(xlsx|xls)$/i, '');
-    $('#ex-duration').value = 30;
-    $('#ex-shuffle-q').checked = true;
-    $('#ex-shuffle-c').checked = true;
-    renderQuestionEditor();
-    $('#exam-list-view').classList.add('hidden');
-    $('#exam-editor').classList.remove('hidden');
     toast(`${questions.length}개 문항을 가져왔습니다. 검토 후 [저장]을 누르세요.`);
   } catch (err) { toast(err.message, 'warn'); }
   e.target.value = '';
@@ -420,12 +513,7 @@ $('#excel-file').addEventListener('change', async (e) => {
 $('#btn-new-exam').addEventListener('click', () => {
   editingExamId = null;
   editQuestions = [];
-  $('#exam-editor-title').textContent = '새 시험';
-  $('#ex-title').value = ''; $('#ex-duration').value = 30;
-  $('#ex-shuffle-q').checked = true; $('#ex-shuffle-c').checked = true;
-  renderQuestionEditor();
-  $('#exam-list-view').classList.add('hidden');
-  $('#exam-editor').classList.remove('hidden');
+  showEditor('새 시험');
 });
 
 async function openExamEditor(id) {
@@ -436,15 +524,9 @@ async function openExamEditor(id) {
     choices: q.choices?.map((c) => c.text),
     answerIndex: q.choices?.findIndex((c) => c.id === q.answerChoiceId) ?? 0,
     acceptedAnswers: q.acceptedAnswers?.join('; '),
+    modelAnswer: q.modelAnswer ?? '', rubric: q.rubric ?? '', allowFile: q.allowFile === true,
   }));
-  $('#exam-editor-title').textContent = `시험 수정 — ${exam.title}`;
-  $('#ex-title').value = exam.title;
-  $('#ex-duration').value = exam.durationMin ?? 30;
-  $('#ex-shuffle-q').checked = exam.shuffleQuestions;
-  $('#ex-shuffle-c').checked = exam.shuffleChoices;
-  renderQuestionEditor();
-  $('#exam-list-view').classList.add('hidden');
-  $('#exam-editor').classList.remove('hidden');
+  showEditor(`시험 수정 — ${exam.title}`, exam);
 }
 
 $('#btn-cancel-exam').addEventListener('click', () => {
@@ -458,8 +540,11 @@ $('#btn-save-exam').addEventListener('click', async () => {
     durationMin: Number($('#ex-duration').value),
     shuffleQuestions: $('#ex-shuffle-q').checked,
     shuffleChoices: $('#ex-shuffle-c').checked,
+    instantResults: $('#ex-instant').checked,
     questions: editQuestions,
   };
+  const weakEssays = editQuestions.filter((q) => q.type === 'essay' && !(q.modelAnswer ?? '').trim() && !(q.rubric ?? '').trim());
+  if (weakEssays.length && !confirm(`서술형 ${weakEssays.length}문항에 모범답안·채점기준이 없습니다.\n이대로 저장하면 AI 채점 정확도가 낮아집니다. 계속할까요?`)) return;
   try {
     if (editingExamId) await api('PUT', `/api/teacher/exams/${editingExamId}`, payload);
     else await api('POST', '/api/teacher/exams', payload);
@@ -479,6 +564,7 @@ async function openMonitor(examId) {
   $('#exam-editor').classList.add('hidden');
   $('#exam-monitor').classList.remove('hidden');
   $('#results-csv-link').href = `/api/teacher/exams/${examId}/results.csv`;
+  $('#results-xlsx-link').href = `/api/teacher/exams/${examId}/results.xlsx`;
   // 다른 탭에 있어도 감독 화면으로 이동
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === 'exams'));
   $$('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-exams'));
@@ -495,7 +581,7 @@ $('#btn-monitor-back').addEventListener('click', () => {
 
 $('#btn-publish-results').addEventListener('click', async () => {
   const publishing = !monitorData?.exam?.resultsPublished;
-  if (publishing && !confirm('학생들에게 성적을 공개할까요?\n각 학생은 본인의 점수, 문항별 정오, 정답을 볼 수 있게 됩니다.\n(서술형 채점을 먼저 마쳤는지 확인하세요.)')) return;
+  if (publishing && !confirm('학생들에게 성적을 공개할까요?\n각 학생은 본인의 점수, 문항별 정오, 정답, 피드백을 볼 수 있게 됩니다.\n(서술형 채점을 먼저 마쳤는지 확인하세요. 나중에 채점하면 그때 학생 화면도 갱신됩니다.)')) return;
   try {
     await api('POST', `/api/teacher/exams/${monitorExamId}/publish-results`, { published: publishing });
     toast(publishing ? '성적을 공개했습니다.' : '성적 공개를 취소했습니다.');
@@ -511,9 +597,70 @@ $('#btn-stop-exam').addEventListener('click', async () => {
   } catch (err) { toast(err.message, 'warn'); }
 });
 
+// AI 배치 채점
+$('#btn-ai-grade').addEventListener('click', async () => {
+  const ex = monitorData?.exam;
+  if (!ex) return;
+  if (!ex.aiConfigured) {
+    toast('먼저 [도구 · 설정] 탭에서 OpenRouter API 키를 저장하세요.', 'warn');
+    return;
+  }
+  const anyDone = monitorData.rows.some((r) => r.ai?.done);
+  let regrade = false;
+  if (anyDone) {
+    regrade = confirm('이미 AI 채점된 답안이 있습니다.\n\n[확인] 전부 다시 채점 (비용 발생)\n[취소] 아직 채점되지 않은 답안만 채점');
+  }
+  if (!confirm(`서술형 ${ex.essayCount}문항을 AI로 채점합니다. 제출된 학생 답안이 OpenRouter로 전송됩니다(이름·번호 제외).\n계속할까요?`)) return;
+  try {
+    await api('POST', `/api/teacher/exams/${monitorExamId}/ai-grade`, { regrade });
+    toast('AI 채점을 시작했습니다. 진행률이 표시됩니다.');
+    await refreshMonitor();
+  } catch (err) { toast(err.message, 'warn'); }
+});
+
+$('#btn-ai-apply').addEventListener('click', async () => {
+  if (!confirm('AI가 매긴 서술형 점수와 피드백을 최종 점수로 반영할까요?\n\n- 교사가 이미 직접 입력한 점수는 그대로 유지됩니다.\n- 반영 후에도 [답안/채점]에서 학생별로 수정할 수 있습니다.')) return;
+  try {
+    const r = await api('POST', `/api/teacher/exams/${monitorExamId}/apply-ai`);
+    toast(`${r.attemptsTouched}명, ${r.gradesApplied}개 문항에 AI 점수를 반영했습니다.`);
+    await refreshMonitor();
+  } catch (err) { toast(err.message, 'warn'); }
+});
+
+function renderAiProgress(p) {
+  const box = $('#ai-progress');
+  if (!p) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : 100;
+  box.innerHTML = p.finished
+    ? `🤖 AI 채점 완료 — ${p.done}명 처리${p.failed ? `, <b>${p.failed}명 오류</b> (답안/채점에서 확인 후 재채점)` : ''}. 결과를 검토한 뒤 [AI 점수 전체 반영]을 누르세요.`
+    : `🤖 AI 채점 진행 중… ${p.done}/${p.total}명${p.failed ? ` (오류 ${p.failed})` : ''}
+       <div class="progress-bar"><div style="width:${pct}%"></div></div>`;
+}
+
+function aiCell(r) {
+  if (!r.submitted) return '';
+  const a = r.ai;
+  if (!a) return '<span class="muted">—</span>';
+  if (!a.done && !a.error) return '<span class="muted">대기</span>';
+  const parts = [];
+  if (a.done) parts.push(`<span class="status-pill ai">AI ${a.done}/${a.essayCount}</span>`);
+  if (a.error) parts.push(`<span class="status-pill bad">오류 ${a.error}</span>`);
+  if (a.applied) parts.push(`<span class="status-pill published">반영 ${a.applied}</span>`);
+  if (a.lowConf) parts.push(`<span class="status-pill warn" title="AI 확신도가 낮은 답안 — 직접 확인 권장">검토 ${a.lowConf}</span>`);
+  return `<span class="ai-cell">${parts.join(' ')}</span>`;
+}
+
 async function refreshMonitor() {
   if (!monitorExamId) return;
-  monitorData = await api('GET', `/api/teacher/exams/${monitorExamId}/monitor`);
+  try {
+    monitorData = await api('GET', `/api/teacher/exams/${monitorExamId}/monitor`);
+  } catch (err) {
+    // 시험이 삭제되었거나 서버가 바뀐 경우: 목록으로 복귀
+    toast(err.message, 'warn');
+    $('#btn-monitor-back').click();
+    return;
+  }
   serverOffset = monitorData.serverNow - Date.now();
   const { exam, rows } = monitorData;
   $('#monitor-title').textContent = `${exam.title} — ${exam.status === 'active' ? '진행 중' : '종료됨'}`;
@@ -522,13 +669,21 @@ async function refreshMonitor() {
   pubBtn.classList.toggle('hidden', exam.status !== 'ended');
   pubBtn.textContent = exam.resultsPublished ? '성적 공개 취소' : '성적 공개 (학생에게 점수 보내기)';
   pubBtn.classList.toggle('primary', !exam.resultsPublished);
+
+  const showAi = exam.status === 'ended' && exam.essayCount > 0;
+  $('#btn-ai-grade').classList.toggle('hidden', !showAi);
+  $('#btn-ai-grade').disabled = !!exam.aiProgress && !exam.aiProgress.finished;
+  const anyAiDone = rows.some((r) => r.ai?.done);
+  $('#btn-ai-apply').classList.toggle('hidden', !showAi || !anyAiDone);
+  if (exam.aiProgress) renderAiProgress(exam.aiProgress);
+  else if (!lastAiProgress || lastAiProgress.examId !== exam.id) renderAiProgress(null);
+
   updateMonitorTimer();
   const typeLabel = { manual: '직접', auto: '시간종료', teacher: '교사종료' };
   $('#monitor-table tbody').innerHTML = rows.map((r) => {
     const p = r.presence;
     const conn = !p.online ? '⚪' : (p.focus === 'away' ? '🟡 이탈' : '🟢');
     const away = p.awayCount ? `${p.awayCount}회/${fmtDur(p.awayMs)}` : '—';
-    const hasEssay = monitorData && r.submitted;
     return `<tr>
       <td>${r.number}</td>
       <td>${esc(r.name)}</td>
@@ -537,7 +692,8 @@ async function refreshMonitor() {
       <td>${away}</td>
       <td>${r.submitted ? `✅ ${typeLabel[r.submitType] ?? ''} ${fmtTime(r.submittedAt)}` : '—'}</td>
       <td>${r.score != null ? `${r.score}점` : '—'}</td>
-      <td>${hasEssay ? `<button class="small" data-attempt="${r.attemptId}">답안/채점</button>` : ''}</td>
+      <td>${aiCell(r)}</td>
+      <td>${r.submitted ? `<button class="small" data-attempt="${r.attemptId}">답안/채점</button>` : ''}</td>
     </tr>`;
   }).join('');
   $('#monitor-table tbody').onclick = (e) => {
@@ -558,10 +714,36 @@ function updateMonitorTimer() {
 
 // ── 서술형 채점 모달 ─────────────────────────────
 let gradingAttemptId = null;
+let gradingExam = null;
+
+function aiPanel(q, ai) {
+  if (!ai) return '<div class="muted">AI 채점 전 — 감독 화면의 [AI 채점 실행] 또는 위의 [이 학생 AI 채점]을 누르세요.</div>';
+  if (ai.status === 'error') {
+    return `<div class="ai-panel error">🤖 AI 채점 실패: ${esc(ai.error)}<br><span class="muted">키·모델·네트워크를 확인하고 다시 시도하세요.</span></div>`;
+  }
+  const conf = ai.confidence == null ? '' : `확신도 ${Math.round(ai.confidence * 100)}%`;
+  const low = ai.confidence != null && ai.confidence < 0.6;
+  const crit = (ai.criteria ?? []).length
+    ? `<ul>${ai.criteria.map((c) => `<li><b>${esc(c.name)}</b> ${c.score}/${c.max} — ${esc(c.reason)}</li>`).join('')}</ul>` : '';
+  return `<div class="ai-panel">
+    <div class="ai-head">🤖 AI 채점 초안 <span class="ai-score">${ai.score} / ${ai.maxScore ?? q.points}점</span>
+      <span class="${low ? 'conf-low' : 'muted'}">${conf}${low ? ' — 직접 확인 권장' : ''}</span>
+      <span class="muted">${esc(ai.model ?? '')}${ai.promptTokens ? ` · ${ai.promptTokens + (ai.completionTokens ?? 0)} tokens` : ''}</span>
+      <span class="sep"></span>
+      <button class="small ai" data-apply-q="${q.id}" title="AI 점수와 피드백을 아래 입력칸에 채웁니다">이 점수 적용</button>
+    </div>
+    ${ai.summary ? `<div class="fb"><b>첨부 요약:</b> ${esc(ai.summary)}</div>` : ''}
+    ${crit}
+    ${ai.feedback ? `<div class="fb"><b>피드백 제안:</b> ${esc(ai.feedback)}</div>` : ''}
+  </div>`;
+}
 
 async function openGradeModal(attemptId) {
   const { exam, attempt, student } = await api('GET', `/api/teacher/exams/${monitorExamId}/attempts/${attemptId}`);
   gradingAttemptId = attemptId;
+  gradingExam = exam;
+  const hasEssay = exam.questions.some((q) => q.type === 'essay');
+  $('#btn-ai-regrade').classList.toggle('hidden', !(hasEssay && exam.status === 'ended'));
   $('#grade-title').textContent = `답안 확인 — ${student?.number}번 ${student?.name}`;
   $('#grade-content').innerHTML = exam.questions.map((q, i) => {
     const a = attempt.answers[q.id];
@@ -581,30 +763,80 @@ async function openGradeModal(attemptId) {
         <div class="answer-box">${esc(a?.text ?? '(무응답)')}</div>
         <div>자동 채점: ${earned}점 ${earned >= q.points ? '⭕' : '❌'}
           <span class="muted">인정 답안: ${(q.acceptedAnswers ?? []).map(esc).join(', ')}</span></div>
-        <label>점수 정정 <input type="number" min="0" max="${q.points}" value="${cur}"
+        <label>점수 정정 <input type="number" min="0" max="${q.points}" step="0.5" value="${cur}"
           data-grade-q="${q.id}" style="width:70px"> / ${q.points}점
           <span class="muted">(비우면 자동 채점 유지)</span></label>
       </div>`;
     }
+    const ai = attempt.aiGrades?.[q.id];
+    const fb = attempt.feedback?.[q.id] ?? '';
+    const fileLink = a?.file
+      ? `<a class="file-chip" href="/api/teacher/exams/${exam.id}/attempts/${attempt.id}/files/${q.id}" download>📎 ${esc(a.file.name)} (${Math.max(1, Math.round((a.file.size ?? 0) / 1024))}KB)</a>`
+      : '';
     return `<div class="q-card">
       <b>Q${i + 1}. (서술형 ${q.points}점)</b> ${esc(q.text)}
-      <div class="answer-box">${esc(a?.text ?? '(무응답)')}</div>
-      <label>점수 <input type="number" min="0" max="${q.points}" value="${cur}"
-        data-grade-q="${q.id}" style="width:70px"> / ${q.points}점</label>
+      ${(q.rubric || q.modelAnswer) ? `<details class="rubric"><summary>채점기준 · 모범답안 보기</summary>
+        ${q.rubric ? `<div class="rubric-box"><b>채점기준</b><br>${esc(q.rubric)}</div>` : ''}
+        ${q.modelAnswer ? `<div class="rubric-box"><b>모범답안</b><br>${esc(q.modelAnswer)}</div>` : ''}
+      </details>` : '<div class="muted">채점기준·모범답안 없음</div>'}
+      <div class="answer-box">${esc(a?.text?.trim() ? a.text : (a?.file ? '(텍스트 없음 — 첨부 파일로 제출)' : '(무응답)'))}</div>
+      ${fileLink}
+      ${aiPanel(q, ai)}
+      <div class="grade-row">
+        <label>최종 점수 <input type="number" min="0" max="${q.points}" step="0.5" value="${cur}"
+          data-grade-q="${q.id}"> / ${q.points}점</label>
+        ${hasVal(cur) ? '' : '<span class="muted">미채점</span>'}
+      </div>
+      <div class="feedback-area">
+        <label class="muted">학생에게 보낼 피드백 (성적 공개 시 학생 화면에 표시)</label>
+        <textarea data-feedback-q="${q.id}" placeholder="잘한 점과 보완할 점을 적어 주세요. AI 제안을 적용해 수정할 수도 있습니다.">${esc(fb)}</textarea>
+      </div>
     </div>`;
   }).join('');
   $('#grade-modal').classList.remove('hidden');
 }
 
+// "이 점수 적용": AI 점수/피드백을 입력칸에 채운다 (저장은 교사가 [채점 저장]으로)
+$('#grade-content').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-apply-q]');
+  if (!btn) return;
+  const qid = btn.dataset.applyQ;
+  const { attempt } = await api('GET', `/api/teacher/exams/${monitorExamId}/attempts/${gradingAttemptId}`);
+  const ai = attempt.aiGrades?.[qid];
+  if (!ai || ai.status !== 'done') return;
+  const inp = $(`#grade-content [data-grade-q="${qid}"]`);
+  const ta = $(`#grade-content [data-feedback-q="${qid}"]`);
+  if (inp) inp.value = ai.score;
+  if (ta && ai.feedback) ta.value = ai.feedback;
+  toast('AI 점수를 입력칸에 채웠습니다. 확인 후 [채점 저장]을 누르세요.');
+});
+
+$('#btn-ai-regrade').addEventListener('click', async () => {
+  if (!confirm('이 학생의 서술형 답안을 AI로 (다시) 채점할까요? 답안이 OpenRouter로 전송됩니다(이름·번호 제외).')) return;
+  $('#btn-ai-regrade').disabled = true;
+  $('#btn-ai-regrade').textContent = '채점 중…';
+  try {
+    const r = await api('POST', `/api/teacher/exams/${monitorExamId}/attempts/${gradingAttemptId}/ai-grade`);
+    const errs = Object.values(r.aiGrades).filter((g) => g.status === 'error');
+    toast(errs.length ? `AI 채점 중 ${errs.length}문항 오류: ${errs[0].error}` : 'AI 채점이 끝났습니다. 초안을 확인하세요.', errs.length ? 'warn' : '');
+    await openGradeModal(gradingAttemptId);
+    refreshMonitor();
+  } catch (err) { toast(err.message, 'warn'); }
+  $('#btn-ai-regrade').disabled = false;
+  $('#btn-ai-regrade').textContent = '🤖 이 학생 AI 채점';
+});
+
 $('#btn-close-grades').addEventListener('click', () => $('#grade-modal').classList.add('hidden'));
 $('#btn-save-grades').addEventListener('click', async () => {
   const manualGrades = {};
+  const feedback = {};
   $$('#grade-content [data-grade-q]').forEach((inp) => {
     // 빈 값은 "수동 정정 해제"로 서버에 전달됨
     manualGrades[inp.dataset.gradeQ] = inp.value === '' ? '' : Number(inp.value);
   });
+  $$('#grade-content [data-feedback-q]').forEach((ta) => { feedback[ta.dataset.feedbackQ] = ta.value; });
   try {
-    await api('POST', `/api/teacher/exams/${monitorExamId}/attempts/${gradingAttemptId}/grade`, { manualGrades });
+    await api('POST', `/api/teacher/exams/${monitorExamId}/attempts/${gradingAttemptId}/grade`, { manualGrades, feedback });
     toast('채점을 저장했습니다.');
     $('#grade-modal').classList.add('hidden');
     await refreshMonitor();
@@ -629,6 +861,7 @@ $('#btn-unlock-all').addEventListener('click', async () => {
 
 // ── 실시간 소켓 ─────────────────────────────
 const socket = io('/teacher');
+let lastAiProgress = null;
 
 socket.on('snapshot', (snap) => {
   serverOffset = snap.serverNow - Date.now();
@@ -667,7 +900,7 @@ socket.on('exam:status', async (ev) => {
     activeExam = { id: ev.examId, title: activeExam?.title ?? '시험', status: 'active', endsAt: ev.endsAt };
     try { activeExam = { ...await api('GET', `/api/teacher/exams/${ev.examId}`), status: 'active' }; } catch { /* 무시 */ }
   } else {
-    addFeed('시험이 종료되었습니다.', 'bad');
+    if (ev.reason) addFeed('시험이 종료되었습니다.', 'bad');
     activeExam = null;
   }
   renderBanner();
@@ -686,6 +919,21 @@ socket.on('exam:submitted', (ev) => {
   const s = students.find((x) => x.id === ev.studentId);
   if (s) addFeed(`<b>${s.number}번 ${esc(s.name)}</b> 시험 제출 완료`, 'good');
   if (monitorExamId === ev.examId) refreshMonitor();
+});
+
+// AI 배치 채점 진행률
+let aiRefreshPending = false;
+socket.on('ai:progress', (p) => {
+  lastAiProgress = p;
+  if (monitorExamId !== p.examId) return;
+  renderAiProgress(p);
+  if (p.finished) {
+    addFeed(`🤖 AI 채점 완료 (${p.done}명${p.failed ? `, 오류 ${p.failed}` : ''})`, p.failed ? 'warn' : 'good');
+    refreshMonitor();
+  } else if (!aiRefreshPending) {
+    aiRefreshPending = true;
+    setTimeout(() => { aiRefreshPending = false; refreshMonitor(); }, 2000);
+  }
 });
 
 socket.on('submission:received', (ev) => {

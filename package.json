@@ -1,8 +1,8 @@
 {
   "name": "class-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "교실 평가 시스템 — 교사 호스트 + 학생 클라이언트 (과제 배부/회수, CBT, 붙여넣기 차단)",
+  "description": "교실 평가 시스템 — 교사 호스트 + 학생 클라이언트 (과제 배부/회수, CBT, AI 서술형 채점, 붙여넣기 차단)",
   "type": "module",
   "workspaces": [
     "shared",
@@ -11,7 +11,8 @@
     "student-client"
   ],
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.js",
+    "smoke": "node tools/smoke.js",
     "server": "node server/src/standalone.js",
     "teacher": "electron teacher-app/src/main.js",
     "student": "electron student-client/src/main.js --dev",

@@ -4,12 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>교실 평가 시스템 — 교사</title>
+<link rel="stylesheet" href="theme.css">
 <link rel="stylesheet" href="style.css">
+<script src="theme.js"></script>
 </head>
 <body>
 <header>
   <h1>교실 평가 시스템</h1>
-  <div id="server-info" class="server-info"></div>
+  <div class="header-right">
+    <div id="server-info" class="server-info"></div>
+    <button class="theme-toggle" data-theme-toggle title="테마 전환">🌙</button>
+  </div>
 </header>
 
 <nav id="tabs">
@@ -17,7 +22,7 @@
   <button data-tab="students">학생 명단</button>
   <button data-tab="assignments">과제</button>
   <button data-tab="exams">시험(CBT)</button>
-  <button data-tab="tools">도구</button>
+  <button data-tab="tools">도구 · 설정</button>
 </nav>
 
 <main>
@@ -85,6 +90,7 @@
         <button id="btn-import-excel">엑셀로 문제 가져오기</button>
         <a href="/api/teacher/exams/template.xlsx" download><button>문제 양식(엑셀) 다운로드</button></a>
       </div>
+      <p class="muted">객관식·단답형은 자동 채점됩니다. 서술형은 모범답안·채점기준을 넣어 두면 시험 종료 후 <b>AI 채점 초안</b>을 만들 수 있고, 교사가 검토해 반영합니다.</p>
       <div id="exam-list"></div>
     </div>
 
@@ -96,6 +102,7 @@
           <label>기본 시간(분) <input id="ex-duration" type="number" value="30" style="width:70px"></label>
           <label><input id="ex-shuffle-q" type="checkbox" checked> 문항 순서 섞기</label>
           <label><input id="ex-shuffle-c" type="checkbox" checked> 선택지 순서 섞기</label>
+          <label title="시험이 끝나면 객관식·단답형 점수를 바로 학생에게 공개합니다. 서술형 점수는 채점(AI 반영/직접 입력)되는 대로 갱신됩니다."><input id="ex-instant" type="checkbox"> 종료 즉시 성적 공개</label>
         </div>
       </div>
       <div id="question-editor"></div>
@@ -115,18 +122,58 @@
         <button id="btn-monitor-back">← 목록으로</button>
         <span id="monitor-timer" class="timer"></span>
         <button id="btn-stop-exam" class="danger hidden">시험 종료</button>
+        <span class="sep"></span>
+        <button id="btn-ai-grade" class="ai hidden">🤖 AI 채점 실행 (서술형)</button>
+        <button id="btn-ai-apply" class="hidden">AI 점수 전체 반영</button>
         <button id="btn-publish-results" class="hidden"></button>
-        <a id="results-csv-link" href="#"><button>결과 CSV 다운로드</button></a>
+        <a id="results-xlsx-link" href="#"><button>결과 엑셀 다운로드</button></a>
+        <a id="results-csv-link" href="#"><button>CSV</button></a>
       </div>
+      <div id="ai-progress" class="notice ai hidden"></div>
       <table id="monitor-table">
-        <thead><tr><th>번호</th><th>이름</th><th>접속</th><th>진행</th><th>이탈</th><th>제출</th><th>점수</th><th></th></tr></thead>
-      <tbody></tbody>
+        <thead><tr><th>번호</th><th>이름</th><th>접속</th><th>진행</th><th>이탈</th><th>제출</th><th>점수</th><th>AI 채점</th><th></th></tr></thead>
+        <tbody></tbody>
       </table>
     </div>
   </section>
 
-  <!-- 도구 -->
+  <!-- 도구 · 설정 -->
   <section id="tab-tools" class="tab">
+    <h2>AI 채점 설정 (OpenRouter)</h2>
+    <div class="card" id="ai-settings-card">
+      <p class="muted">
+        서술형 문항만 AI가 채점 초안을 만듭니다. 객관식·단답형은 AI를 쓰지 않습니다.
+        API 키는 이 교사 PC에만 저장되며 학생 프로그램에는 전달되지 않습니다.
+        AI에는 문항·채점기준·모범답안·학생 답안만 보내고 <b>이름·번호 등 개인정보는 보내지 않습니다.</b>
+      </p>
+      <div class="form-grid">
+        <label>API 키
+          <div class="row">
+            <input id="ai-key" type="password" placeholder="sk-or-v1-..." autocomplete="off" style="flex:1">
+            <button id="btn-ai-key-show" class="small" type="button">보기</button>
+          </div>
+          <span id="ai-key-hint" class="muted"></span>
+        </label>
+        <label>채점 모델
+          <select id="ai-model-select"></select>
+          <input id="ai-model-custom" type="text" class="hidden" placeholder="OpenRouter 모델 ID 직접 입력 (예: anthropic/claude-sonnet-4.5)">
+        </label>
+        <label>PDF 첨부 처리
+          <select id="ai-pdf-engine">
+            <option value="pdf-text">텍스트 PDF (무료, 기본)</option>
+            <option value="mistral-ocr">OCR 엔진 (이미지 PDF, 페이지당 과금)</option>
+          </select>
+          <span class="muted">학생이 PDF를 첨부하는 서술형 문항에만 해당합니다. 종이 스캔본은 어느 엔진이든 정확도를 보장하지 않습니다.</span>
+        </label>
+      </div>
+      <div class="toolbar">
+        <button id="btn-ai-save" class="primary">저장</button>
+        <button id="btn-ai-test">연결 테스트</button>
+        <button id="btn-ai-clear" class="small">키 삭제</button>
+        <span id="ai-test-result" class="muted"></span>
+      </div>
+    </div>
+
     <h2>학생 화면 잠금 해제</h2>
     <div class="card">
       <p class="muted">시험 중 학생 프로그램은 임의로 종료할 수 없습니다. 특정 학생만 풀어주려면 해제 코드를 발급해 불러주세요.</p>
@@ -144,7 +191,11 @@
 
 <div id="grade-modal" class="modal hidden">
   <div class="modal-body">
-    <h2 id="grade-title">서술형 채점</h2>
+    <div class="row">
+      <h2 id="grade-title" style="margin:0">서술형 채점</h2>
+      <span class="sep"></span>
+      <button id="btn-ai-regrade" class="ai small hidden">🤖 이 학생 AI 채점</button>
+    </div>
     <div id="grade-content"></div>
     <div class="toolbar">
       <button id="btn-save-grades" class="primary">채점 저장</button>

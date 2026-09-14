@@ -17,7 +17,7 @@ const DEFAULT_DATA = {
 // - db.json: 전체 상태. 쓰기는 2초 디바운스(잦은 답안 저장으로 인한 전체 재기록 방지)
 // - events/*.jsonl: 답안·이탈로그를 즉시 append → 서버가 죽어도 리플레이로 복구
 export async function openDb(dataDir) {
-  for (const sub of ['events', path.join('files', 'assignments'), path.join('files', 'submissions'), 'tmp']) {
+  for (const sub of ['events', path.join('files', 'assignments'), path.join('files', 'submissions'), path.join('files', 'exam-answers'), 'tmp']) {
     fs.mkdirSync(path.join(dataDir, sub), { recursive: true });
   }
 
@@ -28,6 +28,14 @@ export async function openDb(dataDir) {
   const s = low.data.settings;
   if (!s.tokenSecret) s.tokenSecret = randomBytes(24).toString('hex');
   if (!s.serverName) s.serverName = '우리반 수업 서버';
+  // AI 채점 설정 (OpenRouter). 키는 교사 PC의 db.json에만 저장되고 학생에게는 절대 전달되지 않는다.
+  if (!s.ai) s.ai = { apiKey: '', model: '', pdfEngine: 'pdf-text' };
+  // 구버전 데이터 호환: 응시 기록에 AI/피드백 필드 보강
+  for (const att of low.data.attempts) {
+    att.aiGrades ??= {};
+    att.feedback ??= {};
+    att.manualGrades ??= {};
+  }
   await low.write();
 
   let flushTimer = null;

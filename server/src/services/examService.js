@@ -43,6 +43,8 @@ export function createExamService(db, io) {
         submitType: null,
         answers: {},
         manualGrades: {},
+        aiGrades: {},
+        feedback: {},
         score: null,
         scoreDetail: null,
       });
@@ -71,6 +73,9 @@ export function createExamService(db, io) {
     db.scheduleFlush();
     studentNs().emit('exam:ended', { examId: exam.id, reason });
     teacherNs().emit('exam:status', { examId: exam.id, status: 'ended', reason });
+    // "즉시 공개" 시험: 종료와 동시에 자동 채점분(객관식·단답형)을 학생에게 공개.
+    // 서술형은 교사가 AI 채점 반영/직접 채점을 하면 그때 갱신되어 보인다.
+    if (exam.instantResults === true) setResultsPublished(exam, true);
   }
 
   function assertAcceptingAnswers(exam) {
@@ -95,6 +100,9 @@ export function createExamService(db, io) {
     } else {
       const text = String(answer?.text ?? '').slice(0, MAX_ESSAY_LENGTH);
       saved = { text, savedAt };
+      // 첨부 파일은 별도 경로(saveAnswerFile)로만 바뀐다. 텍스트 저장 시 기존 첨부는 유지.
+      const prevFile = attempt.answers[questionId]?.file;
+      if (prevFile) saved.file = prevFile;
     }
     attempt.answers[questionId] = saved;
     db.appendEvent(answersLog(exam.id), {
@@ -110,12 +118,41 @@ export function createExamService(db, io) {
     return { savedAt };
   }
 
+  // 서술형 첨부 파일 저장/삭제 (파일 자체는 라우트가 디스크에 놓고, 여기서는 답안 메타만 관리)
+  function saveAnswerFile(exam, student, questionId, fileMeta) {
+    assertAcceptingAnswers(exam);
+    const attempt = attemptOf(exam.id, student.id);
+    if (!attempt) throw new Error('이 시험의 응시 대상이 아닙니다.');
+    if (attempt.submittedAt) throw new Error('이미 제출한 시험입니다.');
+    const q = exam.questions.find((x) => x.id === questionId);
+    if (!q) throw new Error('존재하지 않는 문항입니다.');
+    if (q.type !== 'essay' || q.allowFile !== true) throw new Error('이 문항은 파일 첨부를 허용하지 않습니다.');
+    const prev = attempt.answers[questionId] ?? { text: '' };
+    const savedAt = Date.now();
+    const saved = { text: prev.text ?? '', savedAt, file: fileMeta ?? undefined };
+    if (!fileMeta) delete saved.file;
+    attempt.answers[questionId] = saved;
+    db.appendEvent(answersLog(exam.id), {
+      ts: savedAt, attemptId: attempt.id, studentId: student.id, questionId, answer: saved,
+    });
+    db.scheduleFlush();
+    teacherNs().emit('exam:progress', {
+      examId: exam.id, studentId: student.id,
+      answeredCount: countAnswered(exam, attempt), questionCount: exam.questions.length,
+    });
+    return { attempt, previousFile: prev.file ?? null, savedAt };
+  }
+
+  const hasAnswer = (q, a) => {
+    if (!a) return false;
+    if (q.type === 'mc') return a.choiceId != null;
+    return (a.text ?? '').trim() !== '' || !!a.file;
+  };
+
   function countAnswered(exam, attempt) {
     let n = 0;
     for (const q of exam.questions) {
-      const a = attempt.answers[q.id];
-      if (!a) continue;
-      if (q.type === 'mc' ? a.choiceId != null : (a.text ?? '').trim() !== '') n++;
+      if (hasAnswer(q, attempt.answers[q.id])) n++;
     }
     return n;
   }
@@ -162,10 +199,15 @@ export function createExamService(db, io) {
         endsAt: exam.endsAt,
         status: exam.status,
         lockdown: exam.lockdown === true,
+        instantResults: exam.instantResults === true,
       },
       serverNow: Date.now(),
       submitted: !!attempt.submittedAt,
-      answers: attempt.answers,
+      // 첨부 파일은 이름/크기만 (저장 경로는 노출하지 않음)
+      answers: Object.fromEntries(Object.entries(attempt.answers).map(([qid, a]) => [qid, {
+        ...a,
+        ...(a.file ? { file: { name: a.file.name, size: a.file.size } } : {}),
+      }])),
       questions: attempt.questionOrder.map((qid, idx) => {
         const q = byId[qid];
         const choiceById = q.choices ? Object.fromEntries(q.choices.map((c) => [c.id, c])) : {};
@@ -175,6 +217,7 @@ export function createExamService(db, io) {
           type: q.type,
           text: q.text,
           points: q.points,
+          allowFile: q.type === 'essay' && q.allowFile === true,
           choices: (attempt.choiceOrder[qid] ?? []).map((cid) => ({ id: cid, text: choiceById[cid].text })),
         };
       }),
@@ -195,6 +238,8 @@ export function createExamService(db, io) {
   function buildResultPayload(exam, attempt) {
     const detail = attempt.scoreDetail ?? { perQuestion: {}, total: null, maxTotal: null };
     const byId = Object.fromEntries(exam.questions.map((q) => [q.id, q]));
+    const essayTotal = exam.questions.filter((q) => q.type === 'essay').length;
+    const essayGraded = exam.questions.filter((q) => q.type === 'essay' && detail.perQuestion?.[q.id] != null).length;
     return {
       exam: { id: exam.id, title: exam.title },
       submittedAt: attempt.submittedAt,
@@ -202,6 +247,8 @@ export function createExamService(db, io) {
       maxTotal: detail.maxTotal,
       autoScore: detail.autoScore ?? detail.mcScore,
       manualScore: detail.manualScore ?? detail.essayScore,
+      essayTotal,
+      essayGraded,
       questions: attempt.questionOrder.map((qid, idx) => {
         const q = byId[qid];
         const a = attempt.answers[qid];
@@ -213,9 +260,11 @@ export function createExamService(db, io) {
           points: q.points,
           earned: detail.perQuestion?.[qid] ?? null,
           myAnswer: q.type === 'mc' ? choiceText(a?.choiceId) : (a?.text ?? null),
+          myFile: a?.file?.name ?? null,
           correctAnswer: q.type === 'mc' ? choiceText(q.answerChoiceId)
             : q.type === 'short' ? (q.acceptedAnswers ?? []).join(', ')
               : null,
+          feedback: attempt.feedback?.[qid] ?? null,
         };
       }),
     };
@@ -258,8 +307,8 @@ export function createExamService(db, io) {
   }
 
   return {
-    findExam, attemptOf, startExam, endExam, saveAnswer, submit, regrade,
-    buildStudentPayload, activeExamFor, countAnswered, restore, stopAllTimers,
+    findExam, attemptOf, startExam, endExam, saveAnswer, saveAnswerFile, submit, regrade,
+    buildStudentPayload, activeExamFor, countAnswered, hasAnswer, restore, stopAllTimers,
     setResultsPublished, buildResultPayload,
   };
 }

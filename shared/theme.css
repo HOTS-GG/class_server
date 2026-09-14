@@ -1,0 +1,230 @@
+/* ================================================================
+   공통 테마 — school_record_app과 동일한 팔레트 (Apple iOS 계열)
+   교사 대시보드와 학생 클라이언트가 같은 파일을 사용한다.
+   라이트 모드 기본, <html data-mode="dark">면 다크 모드.
+   ================================================================ */
+:root {
+  /* 강조 색상 */
+  --accent-rgb:        0, 122, 255;
+  --accent-hex:        #007aff;
+  --accent-hex-hover:  #0071e3;
+  --accent-text:       #007aff;
+  --accent-bright:     #0071e3;
+  --accent-bg:         rgba(0, 122, 255, 0.10);
+  --accent-border:     rgba(0, 122, 255, 0.30);
+
+  /* 배경 */
+  --bg-0:              #f2f2f7;   /* 앱 바탕 */
+  --bg-1:              #ffffff;   /* 헤더/패널 */
+  --bg-2:              #ffffff;   /* 카드 / 입력창 / 모달 */
+  --bg-hover:          #e5e5ea;
+  --bg-hover-bright:   #d1d1d6;
+
+  /* 테두리 */
+  --bd-1:   #c6c6c8;
+  --bd-2:   #d1d1d6;
+  --bd-soft: #e5e5ea;
+
+  /* 텍스트 */
+  --tx-1:   #000000;
+  --tx-2:   #3c3c43;
+  --tx-3:   #636366;
+  --tx-4:   #8e8e93;
+  --tx-5:   #c7c7cc;
+
+  --overlay: rgba(0, 0, 0, 0.3);
+  --shadow:  rgba(0, 0, 0, 0.10);
+
+  --sb-track:       #f2f2f7;
+  --sb-thumb:       #c6c6c8;
+  --sb-thumb-hover: #8e8e93;
+
+  /* 위험(red) */
+  --clr-red-rgb:        255, 59, 48;
+  --clr-red-text:       #ff3b30;
+  --clr-red-solid:      #ff3b30;
+  --clr-red-bg:         rgba(255, 59, 48, 0.08);
+  --clr-red-border:     rgba(255, 59, 48, 0.25);
+  --clr-red-bg-hover:   rgba(255, 59, 48, 0.14);
+
+  /* 경고(amber) */
+  --clr-warn-rgb:        255, 149, 0;
+  --clr-warn-text:       #ff9500;
+  --clr-warn-bg:         rgba(255, 149, 0, 0.08);
+  --clr-warn-border:     rgba(255, 149, 0, 0.25);
+
+  /* 성공(green) */
+  --clr-green-rgb:    52, 199, 89;
+  --clr-green-text:   #34c759;
+  --clr-green-bg:     rgba(52, 199, 89, 0.08);
+  --clr-green-border: rgba(52, 199, 89, 0.25);
+  --clr-green-bright: #28a745;
+
+  /* 보라(purple) — AI 관련 요소 */
+  --clr-purple-rgb:    175, 82, 222;
+  --clr-purple-text:   #af52de;
+  --clr-purple-bg:     rgba(175, 82, 222, 0.08);
+  --clr-purple-border: rgba(175, 82, 222, 0.25);
+
+  /* 메모(orange) */
+  --clr-note-text:     #ff9500;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font: -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+}
+
+[data-mode="dark"] {
+  --accent-rgb:        0, 122, 255;
+  --accent-hex:        #007aff;
+  --accent-hex-hover:  #0a84ff;
+  --accent-text:       #409cff;
+  --accent-bright:     #64b5f6;
+  --accent-bg:         rgba(0, 122, 255, 0.16);
+  --accent-border:     rgba(0, 122, 255, 0.40);
+
+  --bg-0:              #000000;
+  --bg-1:              #1c1c1e;
+  --bg-2:              #2c2c2e;
+  --bg-hover:          #3a3a3c;
+  --bg-hover-bright:   #48484a;
+
+  --bd-1:   #38383a;
+  --bd-2:   #48484a;
+  --bd-soft: #2c2c2e;
+
+  --tx-1:   #ffffff;
+  --tx-2:   #ebebf5;
+  --tx-3:   #aeaeb2;
+  --tx-4:   #7c7c80;
+  --tx-5:   #48484a;
+
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow:  rgba(0, 0, 0, 0.5);
+
+  --sb-track:       #1c1c1e;
+  --sb-thumb:       #3a3a3c;
+  --sb-thumb-hover: #48484a;
+
+  --clr-red-rgb:        255, 59, 48;
+  --clr-red-text:       #ff453a;
+  --clr-red-solid:      #ff3b30;
+  --clr-red-bg:         rgba(255, 59, 48, 0.12);
+  --clr-red-border:     rgba(255, 59, 48, 0.30);
+  --clr-red-bg-hover:   rgba(255, 59, 48, 0.20);
+
+  --clr-warn-rgb:        255, 214, 10;
+  --clr-warn-text:       #ffd60a;
+  --clr-warn-bg:         rgba(255, 214, 10, 0.10);
+  --clr-warn-border:     rgba(255, 214, 10, 0.28);
+
+  --clr-green-rgb:    48, 209, 88;
+  --clr-green-text:   #30d158;
+  --clr-green-bg:     rgba(48, 209, 88, 0.10);
+  --clr-green-border: rgba(48, 209, 88, 0.28);
+  --clr-green-bright: #34c759;
+
+  --clr-purple-rgb:    191, 90, 242;
+  --clr-purple-text:   #bf5af2;
+  --clr-purple-bg:     rgba(191, 90, 242, 0.10);
+  --clr-purple-border: rgba(191, 90, 242, 0.28);
+
+  --clr-note-text:     #ff9f0a;
+}
+
+/* ── 공통 기본 요소 ─────────────────────────── */
+* { box-sizing: border-box; }
+html { color-scheme: light; }
+[data-mode="dark"] { color-scheme: dark; }
+body {
+  margin: 0; font-family: var(--font); background: var(--bg-0); color: var(--tx-1);
+  font-size: 14px; line-height: 1.5;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
+
+.hidden { display: none !important; }
+.muted { color: var(--tx-3); font-weight: 400; font-size: 13px; }
+.msg { color: var(--clr-red-text); min-height: 20px; font-size: 14px; }
+.sep { flex: 1; }
+.row { display: flex; gap: 8px; align-items: center; }
+h1, h2, h3 { letter-spacing: -0.2px; color: var(--tx-1); }
+
+button, .btn {
+  border: 1px solid var(--bd-1); background: var(--bg-2); color: var(--tx-1);
+  padding: 8px 14px; border-radius: var(--radius-sm); cursor: pointer; font-size: 14px;
+  font-family: inherit; transition: background .12s, border-color .12s;
+}
+button:hover { background: var(--bg-hover); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.primary { background: var(--accent-hex); border-color: var(--accent-hex); color: #fff; }
+button.primary:hover { background: var(--accent-hex-hover); }
+button.danger { background: var(--clr-red-solid); border-color: var(--clr-red-solid); color: #fff; }
+button.danger:hover { filter: brightness(.92); }
+button.ai { background: var(--clr-purple-bg); border-color: var(--clr-purple-border); color: var(--clr-purple-text); font-weight: 600; }
+button.ai:hover { background: rgba(var(--clr-purple-rgb), .18); }
+button.small { padding: 4px 10px; font-size: 12px; }
+button.big { font-size: 17px; padding: 12px 24px; }
+button.ghost { background: transparent; border-color: transparent; color: var(--accent-text); }
+button.ghost:hover { background: var(--accent-bg); }
+
+input[type=text], input[type=number], input[type=password], input[type=file], textarea, select {
+  border: 1px solid var(--bd-1); border-radius: var(--radius-sm); padding: 8px 10px; font-size: 14px;
+  font-family: inherit; background: var(--bg-2); color: var(--tx-1);
+}
+input:focus, textarea:focus, select:focus {
+  outline: none; border-color: var(--accent-hex); box-shadow: 0 0 0 3px var(--accent-bg);
+}
+input::placeholder, textarea::placeholder { color: var(--tx-4); }
+textarea { width: 100%; min-height: 60px; resize: vertical; }
+label { font-size: 14px; }
+code { background: var(--bg-hover); padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+a { color: var(--accent-text); }
+
+.card {
+  background: var(--bg-2); border: 1px solid var(--bd-1); border-radius: var(--radius);
+  padding: 16px; margin-bottom: 12px;
+}
+.pill, .status-pill {
+  display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: 12px;
+  background: var(--bg-hover); color: var(--tx-2); white-space: nowrap;
+}
+.status-pill.active, .pill.on, .pill.good { background: var(--clr-green-bg); color: var(--clr-green-text); border: 1px solid var(--clr-green-border); }
+.status-pill.ended, .status-pill.closed, .pill.off, .pill.bad { background: var(--clr-red-bg); color: var(--clr-red-text); border: 1px solid var(--clr-red-border); }
+.status-pill.published { background: var(--accent-bg); color: var(--accent-text); border: 1px solid var(--accent-border); }
+.status-pill.ai, .pill.ai { background: var(--clr-purple-bg); color: var(--clr-purple-text); border: 1px solid var(--clr-purple-border); }
+.status-pill.warn, .pill.warn { background: var(--clr-warn-bg); color: var(--clr-warn-text); border: 1px solid var(--clr-warn-border); }
+
+.notice, .banner {
+  background: var(--clr-warn-bg); border: 1px solid var(--clr-warn-border); color: var(--tx-1);
+  border-radius: var(--radius); padding: 12px 16px; font-size: 14px;
+}
+.notice.info { background: var(--accent-bg); border-color: var(--accent-border); }
+.notice.ai { background: var(--clr-purple-bg); border-color: var(--clr-purple-border); }
+
+.modal {
+  position: fixed; inset: 0; background: var(--overlay);
+  backdrop-filter: blur(12px) saturate(160%); -webkit-backdrop-filter: blur(12px) saturate(160%);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.modal-body {
+  background: var(--bg-2); border: 1px solid var(--bd-1); border-radius: 16px;
+  box-shadow: 0 20px 60px var(--shadow); padding: 20px 24px;
+  width: min(760px, 92vw); max-height: 88vh; overflow-y: auto;
+}
+
+#toasts { position: fixed; right: 16px; bottom: 16px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  background: var(--tx-1); color: var(--bg-2); padding: 10px 16px; border-radius: 10px;
+  font-size: 14px; box-shadow: 0 4px 12px var(--shadow); max-width: 340px; animation: fadein .2s;
+}
+.toast.warn { background: var(--clr-warn-text); color: #000; }
+@keyframes fadein { from { opacity: 0; transform: translateY(8px); } }
+
+/* 테마 전환 버튼 */
+.theme-toggle {
+  width: 34px; height: 34px; padding: 0; border-radius: 50%; font-size: 16px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}

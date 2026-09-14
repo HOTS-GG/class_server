@@ -3,7 +3,15 @@
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '"': '&quot;', '>': '&gt;' }[c]));
+
+// Electron 밖(일반 브라우저)에서 화면을 확인할 때를 위한 대체 API. 실제 배포에서는 preload가 제공한다.
+window.classClient ??= {
+  lock: async () => {}, unlock: async () => {}, quitApp: async () => window.close(),
+  discoverServer: async () => null, isDev: async () => true,
+  downloadFile: async () => ({ ok: false, error: '브라우저 모드에서는 다운로드할 수 없습니다.' }),
+  onMainEvent: () => {}, onBlocked: () => {},
+};
 
 let serverUrl = localStorage.getItem('cs_server') ?? '';
 let token = localStorage.getItem('cs_token') ?? '';
@@ -13,6 +21,9 @@ let examData = null;       // /api/student/exams/active 응답
 let serverOffset = 0;
 let timerHandle = null;
 let examLocked = false;
+let viewingResultExamId = null;
+
+const ATTACH_HELP = 'PDF · PNG/JPG/WEBP 이미지 · TXT/MD 파일, 10MB 이하. 컴퓨터로 작성한 파일만 첨부하세요. 종이에 쓴 답안을 사진·스캔한 파일은 정확히 채점되지 않습니다.';
 
 // ── 공통 ─────────────────────────────
 function showScreen(id) {
@@ -43,6 +54,7 @@ const fmtDur = (ms) => {
   const s = Math.max(0, Math.round(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
+const fmtKb = (n) => `${Math.max(1, Math.round((n ?? 0) / 1024))}KB`;
 
 // ── 접속 ─────────────────────────────
 $('#btn-discover').addEventListener('click', async () => {
@@ -81,6 +93,7 @@ async function join() {
     localStorage.setItem('cs_server', serverUrl);
     localStorage.setItem('cs_token', token);
     localStorage.setItem('cs_student', JSON.stringify(student));
+    $('#connect-msg').textContent = '';
     await afterLogin();
   } catch (err) {
     $('#connect-msg').textContent = err.message === 'Failed to fetch'
@@ -119,6 +132,7 @@ function connectSocket() {
   socket.on('connect', async () => {
     $('#conn-status').textContent = '연결됨';
     $('#conn-status').classList.remove('off');
+    $('#conn-status').classList.add('on');
     // 재접속 시 진행 중 시험 복구
     if (!examLocked) await checkActiveExam();
   });
@@ -126,6 +140,7 @@ function connectSocket() {
   socket.on('disconnect', () => {
     $('#conn-status').textContent = '연결 끊김';
     $('#conn-status').classList.add('off');
+    $('#conn-status').classList.remove('on');
     if (examLocked) $('#save-status').textContent = '⚠ 서버 연결 끊김 — 자동 재연결 중';
   });
 
@@ -147,6 +162,15 @@ function connectSocket() {
   socket.on('exam:results-published', (ev) => {
     toast(`📊 "${ev.title}" 성적이 공개되었습니다. 홈 화면에서 확인하세요.`);
     if ($('#screen-home').classList.contains('active')) loadResults();
+  });
+
+  // 서술형 채점(AI 반영/교사 채점)으로 점수·피드백이 바뀌면 화면 갱신
+  socket.on('exam:results-updated', (ev) => {
+    if ($('#screen-home').classList.contains('active')) loadResults();
+    if ($('#screen-result').classList.contains('active') && viewingResultExamId === ev.examId) {
+      openResult(ev.examId, true);
+      toast('채점 결과가 갱신되었습니다.');
+    }
   });
 
   socket.on('session:kicked', (ev) => {
@@ -235,12 +259,15 @@ async function loadResults() {
   try {
     const list = await api('GET', '/api/student/exams/results');
     $('#results-section').classList.toggle('hidden', !list.length);
-    $('#result-list').innerHTML = list.map((r) => `
-      <div class="result-card">
+    $('#result-list').innerHTML = list.map((r) => {
+      const pending = r.essayTotal > r.essayGraded;
+      return `<div class="result-card">
         <span class="title">${esc(r.title)}</span>
+        ${pending ? `<span class="pill warn">서술형 채점 중 (${r.essayGraded}/${r.essayTotal})</span>` : ''}
         <span class="score">${r.total ?? '-'} / ${r.maxTotal ?? '-'}점</span>
         <button class="small" data-result="${r.examId}">자세히 보기</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch { /* 서버 연결 문제 시 다음 새로고침에서 재시도 */ }
 }
 
@@ -249,31 +276,44 @@ $('#result-list').addEventListener('click', (e) => {
   if (btn) openResult(btn.dataset.result);
 });
 
-async function openResult(examId) {
+async function openResult(examId, silent = false) {
   try {
     const r = await api('GET', `/api/student/exams/${examId}/result`);
+    viewingResultExamId = examId;
     $('#result-title').textContent = r.exam.title;
     $('#result-total').textContent = `${r.total ?? '-'} / ${r.maxTotal ?? '-'}점`;
-    $('#result-content').innerHTML = r.questions.map((q) => {
-      const mark = q.type === 'essay'
-        ? (q.earned == null ? '<span class="muted">채점 전</span>' : `<b>${q.earned}점</b>`)
-        : q.earned === q.points ? '<span class="result-mark-o">⭕ 정답</span>'
-          : q.earned > 0 ? `<b>△ 부분점수 ${q.earned}점</b>`
+    const pendingNote = r.essayTotal > r.essayGraded
+      ? `<div class="notice info result-summary">서술형 ${r.essayTotal - r.essayGraded}문항은 아직 채점 중입니다. 채점이 끝나면 점수와 피드백이 자동으로 갱신됩니다.</div>`
+      : '';
+    $('#result-content').innerHTML = pendingNote + r.questions.map((q) => {
+      let mark;
+      if (q.type === 'essay') {
+        mark = q.earned == null ? '<span class="muted">채점 중</span>'
+          : q.earned >= q.points ? '<span class="result-mark-o">⭕ 만점</span>'
+            : q.earned > 0 ? `<span class="result-mark-p">△ ${q.earned}점</span>`
+              : '<span class="result-mark-x">❌ 0점</span>';
+      } else {
+        mark = q.earned === q.points ? '<span class="result-mark-o">⭕ 정답</span>'
+          : q.earned > 0 ? `<span class="result-mark-p">△ 부분점수 ${q.earned}점</span>`
             : '<span class="result-mark-x">❌ 오답</span>';
+      }
+      const myAnswer = q.myAnswer?.trim() ? esc(q.myAnswer) : (q.myFile ? '' : '무응답');
       return `<div class="question">
         <div class="q-text">${q.no}. ${esc(q.text)}
-          <span class="q-points">[${q.points}점 중 ${q.earned ?? 0}점]</span> ${mark}</div>
-        <div style="margin-top:8px;font-size:14px">
-          내 답: <b>${esc(q.myAnswer ?? '무응답')}</b>
-          ${q.correctAnswer != null ? `<br>정답: <b style="color:#15803d">${esc(q.correctAnswer)}</b>` : ''}
+          <span class="q-points">[${q.points}점 중 ${q.earned ?? '-'}점]</span> ${mark}</div>
+        <div class="result-answer">
+          내 답: <b>${myAnswer}</b>${q.myFile ? ` <span class="muted">📎 첨부: ${esc(q.myFile)}</span>` : ''}
+          ${q.correctAnswer != null ? `<br>정답: <b class="result-correct">${esc(q.correctAnswer)}</b>` : ''}
         </div>
+        ${q.feedback ? `<div class="feedback-box"><b>선생님 피드백</b><br>${esc(q.feedback)}</div>` : ''}
       </div>`;
     }).join('');
-    showScreen('screen-result');
+    if (!silent) showScreen('screen-result');
   } catch (err) { toast(err.message); }
 }
 
 $('#btn-result-back').addEventListener('click', () => {
+  viewingResultExamId = null;
   showScreen('screen-home');
   loadResults();
 });
@@ -310,6 +350,19 @@ async function enterExam() {
   reportFocus('focus', { note: 'exam_enter' });
 }
 
+function attachRow(q, saved) {
+  const f = saved?.file;
+  return `<div class="attach-row" data-attach="${q.id}">
+    ${f ? `<span class="file-chip">📎 ${esc(f.name)} (${fmtKb(f.size)})</span>
+           <button class="small" data-attach-remove="${q.id}">첨부 삭제</button>
+           <span class="muted">다른 파일을 올리면 교체됩니다.</span>`
+    : '<span class="muted">첨부 파일 없음</span>'}
+    <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md" data-attach-input="${q.id}">
+    <button class="small primary" data-attach-upload="${q.id}">파일 첨부</button>
+    <div class="attach-help">${ATTACH_HELP}</div>
+  </div>`;
+}
+
 function renderExamQuestions() {
   $('#exam-questions').innerHTML = examData.questions.map((q) => {
     const saved = examData.answers[q.id];
@@ -331,8 +384,9 @@ function renderExamQuestions() {
       </div>`;
     }
     return `<div class="question" id="qbox-${q.id}">
-      <div class="q-text">${q.no}. ${esc(q.text)}<span class="q-points">[${q.points}점] 서술형</span></div>
+      <div class="q-text">${q.no}. ${esc(q.text)}<span class="q-points">[${q.points}점] 서술형${q.allowFile ? ' · 파일 첨부 가능' : ''}</span></div>
       <textarea data-essay="${q.id}" placeholder="답안을 직접 입력하세요. (붙여넣기 사용 불가)">${esc(saved?.text ?? '')}</textarea>
+      ${q.allowFile ? attachRow(q, saved) : ''}
     </div>`;
   }).join('');
   renderProgressNav();
@@ -360,9 +414,50 @@ function renderExamQuestions() {
   $('#exam-questions').querySelectorAll('input[data-shortq]').forEach((inp) => bindTextSave(inp, inp.dataset.shortq));
 }
 
+// 서술형 파일 첨부/삭제
+$('#exam-questions').addEventListener('click', async (e) => {
+  const up = e.target.closest('button[data-attach-upload]');
+  const rm = e.target.closest('button[data-attach-remove]');
+  if (!up && !rm) return;
+  const qid = up ? up.dataset.attachUpload : rm.dataset.attachRemove;
+  const q = examData.questions.find((x) => x.id === qid);
+  if (!q) return;
+  const btn = up ?? rm;
+  btn.disabled = true;
+  try {
+    let r;
+    if (up) {
+      const input = $(`#exam-questions [data-attach-input="${qid}"]`);
+      const file = input?.files?.[0];
+      if (!file) { toast('첨부할 파일을 먼저 선택하세요.'); btn.disabled = false; return; }
+      const fd = new FormData();
+      fd.append('questionId', qid);
+      fd.append('file', file);
+      r = await api('POST', `/api/student/exams/${examData.exam.id}/answer-file`, fd, true);
+      examData.answers[qid] = { ...(examData.answers[qid] ?? { text: '' }), file: r.file, savedAt: r.savedAt };
+      toast(`첨부했습니다: ${file.name}`);
+    } else {
+      if (!confirm('첨부 파일을 삭제할까요?')) { btn.disabled = false; return; }
+      r = await api('POST', `/api/student/exams/${examData.exam.id}/answer-file/remove`, { questionId: qid });
+      const cur = { ...(examData.answers[qid] ?? { text: '' }), savedAt: r.savedAt };
+      delete cur.file;
+      examData.answers[qid] = cur;
+      toast('첨부를 삭제했습니다.');
+    }
+    // 텍스트는 그대로 두고 첨부 영역만 다시 그림
+    const row = $(`#exam-questions [data-attach="${qid}"]`);
+    if (row) row.outerHTML = attachRow(q, examData.answers[qid]);
+    $('#save-status').textContent = `저장됨 ${new Date(r.savedAt).toLocaleTimeString('ko-KR', { hour12: false })}`;
+    renderProgressNav();
+  } catch (err) {
+    toast(`첨부 실패: ${err.message}`);
+    btn.disabled = false;
+  }
+});
+
 const isAnswered = (q) => {
   const a = examData.answers[q.id];
-  return !!a && (q.type === 'mc' ? a.choiceId != null : (a.text ?? '').trim() !== '');
+  return !!a && (q.type === 'mc' ? a.choiceId != null : ((a.text ?? '').trim() !== '' || !!a.file));
 };
 
 function renderProgressNav() {
@@ -409,7 +504,8 @@ $('#exam-progress').addEventListener('click', (e) => {
 });
 
 function saveAnswer(questionId, answer) {
-  examData.answers[questionId] = { ...answer, savedAt: Date.now() };
+  const prev = examData.answers[questionId];
+  examData.answers[questionId] = { ...answer, savedAt: Date.now(), ...(prev?.file ? { file: prev.file } : {}) };
   renderProgressNav();
   const payload = { examId: examData.exam.id, questionId, answer };
   const onSaved = (savedAt) => {
@@ -445,14 +541,14 @@ function startTimer() {
 
 async function submitExam() {
   const total = examData.questions.length;
-  const answered = examData.questions.filter((q) => {
-    const a = examData.answers[q.id];
-    return a && (q.type === 'mc' ? a.choiceId != null : (a.text ?? '').trim() !== '');
-  }).length;
+  const answered = examData.questions.filter(isAnswered).length;
   const warn = answered < total ? `\n(아직 안 푼 문제가 ${total - answered}개 있습니다!)` : '';
   if (!confirm(`시험을 제출할까요? 제출 후에는 수정할 수 없습니다.${warn}`)) return;
 
-  const done = () => endExamScreen('제출 완료', '답안이 제출되었습니다. 수고했어요!');
+  const instant = examData.exam.instantResults === true;
+  const done = () => endExamScreen('제출 완료',
+    instant ? '답안이 제출되었습니다. 시험이 끝나면 홈 화면의 [시험 결과]에서 점수를 바로 볼 수 있어요.'
+      : '답안이 제출되었습니다. 수고했어요!');
   if (socket?.connected) {
     socket.emit('exam:submit', { examId: examData.exam.id }, (res) => {
       if (res?.ok) done();

@@ -12,6 +12,9 @@ import { openDb } from './db.js';
 import { makeAuth } from './auth.js';
 import { createPresence } from './services/presenceService.js';
 import { createExamService } from './services/examService.js';
+import {
+  createAiGrader, verifyApiKey, AI_MODEL_PRESETS, DEFAULT_AI_MODEL, DEFAULT_PDF_ENGINE,
+} from './services/aiGradingService.js';
 import { startDiscovery } from './services/discovery.js';
 import { attachSockets } from './sockets/index.js';
 import { studentsRouter } from './routes/students.js';
@@ -35,6 +38,7 @@ export async function createClassServer({
   httpPort = DEFAULT_HTTP_PORT,
   udpPort = DEFAULT_UDP_PORT,
   enableDiscovery = true,
+  aiFetch = fetch, // 테스트에서 OpenRouter 호출을 가짜로 바꿀 때 사용
 } = {}) {
   if (!dataDir) throw new Error('dataDir가 필요합니다.');
   const db = await openDb(dataDir);
@@ -50,6 +54,7 @@ export async function createClassServer({
   const presence = createPresence();
   const examService = createExamService(db, io);
   examService.restore();
+  const aiGrader = createAiGrader({ db, io, examService, fetchImpl: aiFetch });
   attachSockets({ io, db, auth, presence, examService });
 
   // CORS: 학생 Electron 렌더러(file://)와 향후 모바일 웹에서의 호출 허용
@@ -125,6 +130,52 @@ export async function createClassServer({
     res.json({ ok: true });
   });
 
+  // ── AI 채점 설정 (OpenRouter) ─────────────────────────────
+  // 키 값은 절대 그대로 돌려주지 않는다 (앞 8자/뒤 4자만).
+  const aiSettingsView = () => {
+    const ai = db.data.settings.ai ?? {};
+    const key = String(ai.apiKey ?? '');
+    return {
+      configured: key.length > 0,
+      keyHint: key ? `${key.slice(0, 8)}…${key.slice(-4)}` : '',
+      keyLength: key.length,
+      model: ai.model || DEFAULT_AI_MODEL,
+      pdfEngine: ai.pdfEngine || DEFAULT_PDF_ENGINE,
+      presets: AI_MODEL_PRESETS,
+      defaultModel: DEFAULT_AI_MODEL,
+    };
+  };
+
+  app.get('/api/teacher/ai-settings', auth.teacherMiddleware, (req, res) => {
+    res.json(aiSettingsView());
+  });
+
+  app.put('/api/teacher/ai-settings', auth.teacherMiddleware, (req, res) => {
+    const { apiKey, model, pdfEngine, clearKey } = req.body ?? {};
+    db.data.settings.ai ??= {};
+    const ai = db.data.settings.ai;
+    if (clearKey === true) ai.apiKey = '';
+    else if (typeof apiKey === 'string' && apiKey.trim()) {
+      ai.apiKey = apiKey.replace(/\s+/g, '');
+    }
+    if (model !== undefined) ai.model = String(model ?? '').trim();
+    if (pdfEngine !== undefined) ai.pdfEngine = pdfEngine === 'mistral-ocr' ? 'mistral-ocr' : 'pdf-text';
+    db.scheduleFlush();
+    res.json({ ok: true, ...aiSettingsView() });
+  });
+
+  // 저장된 키(또는 입력 중인 키)로 OpenRouter 연결 확인
+  app.post('/api/teacher/ai-settings/test', auth.teacherMiddleware, async (req, res) => {
+    const candidate = String(req.body?.apiKey ?? '').replace(/\s+/g, '') || String(db.data.settings.ai?.apiKey ?? '');
+    if (!candidate) return res.status(400).json({ error: 'API 키를 먼저 입력하세요.' });
+    try {
+      const info = await verifyApiKey(candidate, aiFetch);
+      res.json({ ok: true, ...info });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.get('/api/teacher/focus-logs', auth.teacherMiddleware, (req, res) => {
     const name = req.query.examId ? `focus-${req.query.examId}` : 'focus-general';
     res.json(db.readEvents(name));
@@ -132,7 +183,7 @@ export async function createClassServer({
 
   // ── 라우터 마운트 ─────────────────────────────
   const assignments = assignmentRouters({ db, io });
-  const exams = examRouters({ db, presence, examService });
+  const exams = examRouters({ db, io, presence, examService, aiGrader });
 
   app.use('/api/teacher/students', auth.teacherMiddleware, studentsRouter({ db, presence }));
   app.use('/api/teacher/assignments', auth.teacherMiddleware, assignments.teacher);
@@ -141,6 +192,10 @@ export async function createClassServer({
   app.use('/api/student/exams', auth.studentMiddleware, exams.student);
 
   // ── 교사 대시보드 정적 파일 ─────────────────────────────
+  // 공통 테마(학생 클라이언트와 동일 팔레트)는 shared/에서 서빙
+  const sharedDir = path.join(__dirname, '..', '..', 'shared');
+  app.get('/teacher/theme.css', (req, res) => res.sendFile(path.join(sharedDir, 'theme.css')));
+  app.get('/teacher/theme.js', (req, res) => res.sendFile(path.join(sharedDir, 'theme.js')));
   app.use('/teacher', express.static(path.join(__dirname, 'public', 'teacher')));
   app.get('/', (req, res) => res.redirect('/teacher/'));
 
@@ -170,5 +225,5 @@ export async function createClassServer({
     await db.flushNow();
   };
 
-  return { app, io, httpServer, db, auth, presence, examService, start, stop, httpPort };
+  return { app, io, httpServer, db, auth, presence, examService, aiGrader, start, stop, httpPort };
 }
