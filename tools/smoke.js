@@ -91,6 +91,18 @@ check('standalone에서는 세이브 전환 불가 안내', !!(await post('/api/
 
 const imp = await post('/api/teacher/students/import', { csv: '번호,이름\n1,김민준\n2,이서연\n3,박도윤\n-4,음수번호\n0,영번호' });
 check('학생 3명 CSV 등록 (음수·0번은 건너뜀)', imp.addedCount === 3 && imp.skipped.some((s) => s.startsWith('-4')) && imp.skipped.some((s) => s.startsWith('0,')));
+// 명단 양식(엑셀) 다운로드 → 그대로 업로드 (예시 5명 중 1~3번은 이미 있어 건너뜀)
+const stuTmpl = await fetch(`${base}/api/teacher/students/template.xlsx`);
+check('명단 양식 엑셀 다운로드', (stuTmpl.headers.get('content-type') ?? '').includes('spreadsheetml'));
+{
+  const f = new FormData();
+  f.append('file', new Blob([await stuTmpl.arrayBuffer()]), '학생명단양식.xlsx');
+  const r = await fetch(`${base}/api/teacher/students/import-excel`, { method: 'POST', body: f }).then((x) => x.json());
+  check('엑셀 명단 불러오기 (2명 추가, 3건 번호 중복 건너뜀)', r.addedCount === 2 && r.skipped.length === 3);
+  for (const s of (await get('/api/teacher/students')).filter((x) => x.number >= 4)) {
+    await fetch(`${base}/api/teacher/students/${s.id}`, { method: 'DELETE' });
+  }
+}
 const negStu = await post('/api/teacher/students', { number: -1, name: '음수' });
 const dupStu = await post('/api/teacher/students', { number: 1, name: '중복' });
 check('출석번호 음수/중복 등록 거부', !!negStu.error && !!dupStu.error);

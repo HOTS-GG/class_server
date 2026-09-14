@@ -382,13 +382,23 @@ $('#btn-import-csv').addEventListener('click', () => $('#csv-file').click());
 $('#csv-file').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  const buf = await file.arrayBuffer();
-  let text;
-  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
-  catch { text = new TextDecoder('euc-kr').decode(buf); } // 엑셀 CP949 저장 대응
   try {
-    const r = await api('POST', '/api/teacher/students/import', { csv: text });
+    let r;
+    if (/\.xlsx?$/i.test(file.name)) {
+      const fd = new FormData();
+      fd.append('file', file);
+      r = await api('POST', '/api/teacher/students/import-excel', fd);
+    } else {
+      const buf = await file.arrayBuffer();
+      let text;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+      catch { text = new TextDecoder('euc-kr').decode(buf); } // 엑셀 CP949 저장 대응
+      r = await api('POST', '/api/teacher/students/import', { csv: text });
+    }
     toast(`${r.addedCount}명 추가${r.skipped.length ? `, ${r.skipped.length}건 건너뜀` : ''}`);
+    if (r.skipped.length) {
+      await csDialog.alert(`${r.addedCount}명을 추가했습니다.\n\n건너뛴 ${r.skipped.length}건:\n${r.skipped.slice(0, 20).join('\n')}${r.skipped.length > 20 ? '\n…' : ''}`, { title: '명단 불러오기 결과' });
+    }
     await loadStudents();
   } catch (err) { toast(err.message, 'warn'); }
   e.target.value = '';
