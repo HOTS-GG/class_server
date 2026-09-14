@@ -368,18 +368,42 @@ async function loadExams() {
         await loadExams();
       } else if (btn.dataset.act === 'start') {
         const exam = await api('GET', `/api/teacher/exams/${id}`);
-        const min = prompt('시험 시간(분)을 입력하세요.', exam.durationMin ?? 30);
-        if (min == null) return;
-        const lockdown = confirm('학생 화면을 전체화면으로 잠글까요?\n\n[확인] 전체화면 잠금 모드 (부정행위 방지 강화)\n[취소] 일반 창 모드 (붙여넣기 차단·이탈 감지는 동일하게 작동)');
-        await api('POST', `/api/teacher/exams/${id}/start`, { durationMin: Number(min), lockdown });
-        toast('시험을 시작했습니다.');
-        await openMonitor(id);
+        openStartModal(exam); // Electron은 prompt()를 지원하지 않으므로 모달 사용
       } else if (btn.dataset.act === 'monitor') {
         await openMonitor(id);
       }
     } catch (err) { toast(err.message, 'warn'); }
   };
 }
+
+// ── 시험 시작 모달 ─────────────────────────────
+let startingExamId = null;
+
+function openStartModal(exam) {
+  startingExamId = exam.id;
+  $('#start-title').textContent = `시험 시작 — ${exam.title}`;
+  $('#start-duration').value = exam.durationMin ?? 30;
+  $('#start-lockdown').checked = false;
+  $('#start-modal').classList.remove('hidden');
+  $('#start-duration').focus();
+  $('#start-duration').select();
+}
+
+$('#btn-start-cancel').addEventListener('click', () => $('#start-modal').classList.add('hidden'));
+$('#start-duration').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btn-start-ok').click(); });
+$('#btn-start-ok').addEventListener('click', async () => {
+  const min = Number($('#start-duration').value);
+  if (!Number.isFinite(min) || min < 1) { toast('시험 시간은 1분 이상이어야 합니다.', 'warn'); return; }
+  const id = startingExamId;
+  $('#btn-start-ok').disabled = true;
+  try {
+    await api('POST', `/api/teacher/exams/${id}/start`, { durationMin: min, lockdown: $('#start-lockdown').checked });
+    $('#start-modal').classList.add('hidden');
+    toast('시험을 시작했습니다.');
+    await openMonitor(id);
+  } catch (err) { toast(err.message, 'warn'); }
+  $('#btn-start-ok').disabled = false;
+});
 
 const Q_TYPE_KO = { mc: '객관식', short: '단답형', essay: '서술형' };
 

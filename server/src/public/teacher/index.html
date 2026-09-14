@@ -204,6 +204,25 @@
   </div>
 </div>
 
+<div id="start-modal" class="modal hidden">
+  <div class="modal-body" style="width:min(460px,92vw)">
+    <h2 id="start-title" style="margin-top:0">시험 시작</h2>
+    <div class="form-grid">
+      <label>시험 시간(분)
+        <input id="start-duration" type="number" min="1" max="600" value="30">
+      </label>
+      <label style="flex-direction:row;align-items:center;gap:8px;font-weight:400">
+        <input id="start-lockdown" type="checkbox"> 학생 화면 전체화면 잠금 (부정행위 방지 강화)
+      </label>
+      <span class="muted">잠금을 꺼도 붙여넣기 차단·이탈 감지는 동일하게 작동합니다. 접속한 학생 전원에게 즉시 시험 화면이 열립니다.</span>
+    </div>
+    <div class="toolbar">
+      <button id="btn-start-ok" class="primary">시작</button>
+      <button id="btn-start-cancel">취소</button>
+    </div>
+  </div>
+</div>
+
 <div id="toasts"></div>
 
 <script src="/socket.io/socket.io.js"></script>
