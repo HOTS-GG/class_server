@@ -112,16 +112,18 @@ $('#subject-select').addEventListener('change', () => {
   currentSubjectId = $('#subject-select').value;
   localStorage.setItem('cs_subject', currentSubjectId);
   loadSubjects();
+  loadStudents(); // 명단·현황판도 과목 기준
   if ($('#tab-exams').classList.contains('active')) loadExams();
   if ($('#tab-assignments').classList.contains('active')) loadAssignments();
 });
+const subjectQuery = () => (currentSubjectId ? `?subjectId=${encodeURIComponent(currentSubjectId)}` : '');
 
 function renderSubjectList() {
   $('#subject-list').innerHTML = subjects.length ? subjects.map((s) => `
     <div class="subject-row">
       <span class="subject-tag" style="background:${esc(s.color)}">●</span>
       <input type="text" value="${esc(s.name)}" data-subject-name="${s.id}">
-      <span class="muted">시험 ${s.examCount} · 과제 ${s.assignmentCount}</span>
+      <span class="muted">학생 ${s.studentCount ?? 0} · 시험 ${s.examCount} · 과제 ${s.assignmentCount}</span>
       <button class="small" data-subject-save="${s.id}">이름 저장</button>
       <button class="small" data-subject-del="${s.id}">삭제</button>
     </div>`).join('') : '<p class="muted">아직 과목이 없습니다. 위에서 추가하세요.</p>';
@@ -145,7 +147,8 @@ $('#btn-subject-add').addEventListener('click', async () => {
     localStorage.setItem('cs_subject', currentSubjectId);
     await loadSubjects();
     renderSubjectList();
-    toast(`"${s.name}" 과목을 추가했습니다. 이제 이 과목으로 시험·과제를 만들 수 있습니다.`);
+    await loadStudents();
+    toast(`"${s.name}" 과목을 추가했습니다. 이 과목을 고른 상태에서 명단을 올리고 시험·과제를 만드세요.`);
   } catch (err) { toast(err.message, 'warn'); }
 });
 $('#subject-list').addEventListener('click', async (e) => {
@@ -158,11 +161,12 @@ $('#subject-list').addEventListener('click', async (e) => {
       toast('과목 이름을 저장했습니다.');
     } else if (btn.dataset.subjectDel) {
       const s = subjects.find((x) => x.id === btn.dataset.subjectDel);
-      if (!await csDialog.confirm(`"${s?.name}" 과목을 삭제할까요?\n소속 시험·과제는 삭제되지 않고 "과목 없음"으로 남습니다.`, { title: '과목 삭제', danger: true, okText: '삭제' })) return;
+      if (!await csDialog.confirm(`"${s?.name}" 과목을 삭제할까요?\n소속 학생·시험·과제는 삭제되지 않고 "과목 없음"으로 남습니다.`, { title: '과목 삭제', danger: true, okText: '삭제' })) return;
       await api('DELETE', `/api/teacher/subjects/${btn.dataset.subjectDel}`);
     } else return;
     await loadSubjects();
     renderSubjectList();
+    await loadStudents();
     if ($('#tab-exams').classList.contains('active')) loadExams();
     if ($('#tab-assignments').classList.contains('active')) loadAssignments();
   } catch (err) { toast(err.message, 'warn'); }
@@ -323,22 +327,48 @@ $('#btn-ai-clear').addEventListener('click', async () => {
 
 // ── 학생 명단 ─────────────────────────────
 async function loadStudents() {
-  students = await api('GET', '/api/teacher/students');
+  students = await api('GET', `/api/teacher/students${subjectQuery()}`);
+  $('#codes-csv-link').href = `/api/teacher/students/codes.csv${subjectQuery()}`;
+  const subj = subjects.find((s) => s.id === currentSubjectId);
+  $('#stu-subject-label').textContent = subj ? `— ${subj.name}` : '— 전체 과목';
+  const notice = $('#stu-subject-notice');
+  if (!subjects.length) {
+    notice.textContent = '과목/학급을 아직 만들지 않았습니다. 탭 오른쪽 [관리]에서 반(과목)을 만든 뒤 명단을 올리면 반별로 나뉩니다. 지금 올리는 학생은 "과목 없음"으로 모든 시험·과제 대상이 됩니다.';
+    notice.classList.remove('hidden');
+  } else if (!currentSubjectId) {
+    notice.textContent = '"전체 과목" 상태입니다. 지금 추가하는 학생은 과목 없음(모든 시험·과제 대상)으로 등록됩니다. 특정 반 명단을 올리려면 위에서 과목/학급을 먼저 고르세요.';
+    notice.classList.remove('hidden');
+  } else {
+    notice.classList.add('hidden');
+  }
   renderStudentsTable();
   renderTiles();
 }
 
 function renderStudentsTable() {
   const tbody = $('#students-table tbody');
+  const moveOptions = (s) => '<option value="">(과목 없음)</option>'
+    + subjects.map((x) => `<option value="${x.id}" ${x.id === s.subjectId ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
   tbody.innerHTML = students.map((s) => `
     <tr>
       <td>${s.number}</td>
       <td>${esc(s.name)}</td>
+      <td><select class="small" data-act="move" data-id="${s.id}" title="다른 과목/학급으로 옮기기">${moveOptions(s)}</select></td>
       <td class="code-cell"><button class="code-btn" data-act="code" data-id="${s.id}" title="크게 보기">${s.code}</button>
         <button class="small" data-act="recode" data-id="${s.id}">재발급</button></td>
       <td>${s.presence?.online ? '🟢 접속' : '⚪ 미접속'}</td>
       <td><button class="small" data-act="del" data-id="${s.id}">삭제</button></td>
-    </tr>`).join('');
+    </tr>`).join('') || `<tr><td colspan="6" class="muted">${currentSubjectId ? '이 과목에 등록된 학생이 없습니다. 위에서 추가하거나 명단을 불러오세요.' : '등록된 학생이 없습니다.'}</td></tr>`;
+  tbody.onchange = async (e) => {
+    const sel = e.target.closest('select[data-act="move"]');
+    if (!sel) return;
+    try {
+      await api('PUT', `/api/teacher/students/${sel.dataset.id}/subject`, { subjectId: sel.value });
+      toast('과목/학급을 변경했습니다.');
+      await loadSubjects();
+      await loadStudents();
+    } catch (err) { toast(err.message, 'warn'); await loadStudents(); }
+  };
   tbody.onclick = async (e) => {
     const btn = e.target.closest('button');
     if (!btn) return;
@@ -370,9 +400,10 @@ $('#btn-add-student').addEventListener('click', async () => {
   if (!Number.isInteger(n) || n < 1 || n > 999) { toast('출석번호는 1~999 사이의 정수여야 합니다.', 'warn'); $('#stu-number').focus(); return; }
   if (!$('#stu-name').value.trim()) { toast('이름을 입력하세요.', 'warn'); $('#stu-name').focus(); return; }
   try {
-    await api('POST', '/api/teacher/students', { number: n, name: $('#stu-name').value });
+    await api('POST', '/api/teacher/students', { number: n, name: $('#stu-name').value, subjectId: currentSubjectId });
     $('#stu-number').value = ''; $('#stu-name').value = '';
     $('#stu-number').focus();
+    await loadSubjects();
     await loadStudents();
   } catch (err) { toast(err.message, 'warn'); }
 });
@@ -387,15 +418,17 @@ $('#csv-file').addEventListener('change', async (e) => {
     if (/\.xlsx?$/i.test(file.name)) {
       const fd = new FormData();
       fd.append('file', file);
+      fd.append('subjectId', currentSubjectId);
       r = await api('POST', '/api/teacher/students/import-excel', fd);
     } else {
       const buf = await file.arrayBuffer();
       let text;
       try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
       catch { text = new TextDecoder('euc-kr').decode(buf); } // 엑셀 CP949 저장 대응
-      r = await api('POST', '/api/teacher/students/import', { csv: text });
+      r = await api('POST', '/api/teacher/students/import', { csv: text, subjectId: currentSubjectId });
     }
-    toast(`${r.addedCount}명 추가${r.skipped.length ? `, ${r.skipped.length}건 건너뜀` : ''}`);
+    toast(`${r.subjectName ? `[${r.subjectName}] ` : ''}${r.addedCount}명 추가${r.skipped.length ? `, ${r.skipped.length}건 건너뜀` : ''}`);
+    await loadSubjects();
     if (r.skipped.length) {
       await csDialog.alert(`${r.addedCount}명을 추가했습니다.\n\n건너뛴 ${r.skipped.length}건:\n${r.skipped.slice(0, 20).join('\n')}${r.skipped.length > 20 ? '\n…' : ''}`, { title: '명단 불러오기 결과' });
     }
@@ -1196,5 +1229,4 @@ socket.on('submission:received', (ev) => {
 
 // ── 초기 로드 ─────────────────────────────
 loadServerInfo();
-loadSubjects();
-loadStudents();
+loadSubjects().then(loadStudents);

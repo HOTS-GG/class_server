@@ -45,7 +45,8 @@
 
   <!-- 학생 명단 -->
   <section id="tab-students" class="tab">
-    <h2>학생 명단</h2>
+    <h2>학생 명단 <span id="stu-subject-label" class="muted"></span></h2>
+    <div id="stu-subject-notice" class="notice info hidden" style="margin-bottom:10px"></div>
     <div class="toolbar">
       <input id="stu-number" type="text" inputmode="numeric" placeholder="출석번호" style="width:90px">
       <input id="stu-name" type="text" placeholder="이름" style="width:120px">
@@ -54,11 +55,11 @@
       <input id="csv-file" type="file" accept=".xlsx,.xls,.csv,.txt" class="hidden">
       <button id="btn-import-csv" class="primary">명단 불러오기 (엑셀/CSV)</button>
       <a href="/api/teacher/students/template.xlsx" download><button>명단 양식(엑셀) 다운로드</button></a>
-      <a href="/api/teacher/students/codes.csv" download><button>접속코드표 다운로드</button></a>
+      <a id="codes-csv-link" href="/api/teacher/students/codes.csv" download><button>접속코드표 다운로드</button></a>
     </div>
-    <p class="muted">양식은 <b>번호 | 이름</b> 두 열입니다. 양식을 받아 채운 뒤 [명단 불러오기]로 올리세요. 접속 코드를 누르면 크게 볼 수 있습니다. 명단은 모든 과목에서 공통으로 사용됩니다.</p>
+    <p class="muted">양식은 <b>번호 | 이름</b> 두 열입니다. 위 과목/학급을 고른 상태에서 추가·불러오기를 하면 그 과목 명단이 됩니다. 접속 코드를 누르면 크게 볼 수 있습니다.</p>
     <table id="students-table">
-      <thead><tr><th>번호</th><th>이름</th><th>접속코드</th><th>상태</th><th></th></tr></thead>
+      <thead><tr><th>번호</th><th>이름</th><th>과목/학급</th><th>접속코드</th><th>상태</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </section>

@@ -3,6 +3,7 @@ import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { parseCsv, toCsv } from '../../../shared/src/csv.js';
 import { newId, newAccessCode } from '../../../shared/src/id.js';
+import { subjectNameOf, validSubjectId, studentsOf } from './subjects.js';
 
 // 명단 양식(엑셀): 1행 헤더 "번호 | 이름", 2행부터 학생. 헤더 행은 "이름" 칸으로 찾는다.
 export function buildStudentTemplateExcel() {
@@ -50,7 +51,9 @@ export function studentsRouter({ db, presence }) {
     return code;
   };
 
-  const addStudent = (number, name) => {
+  // 학생은 과목(학급)에 소속된다. subjectId가 없으면 "과목 없음"(공통).
+  // 출석번호는 같은 과목 안에서만 중복을 막는다 (다른 반에는 같은 번호가 있을 수 있음).
+  const addStudent = (number, name, subjectId) => {
     const stu = {
       id: newId('stu'),
       number: Number(number),
@@ -59,35 +62,39 @@ export function studentsRouter({ db, presence }) {
       active: true,
       createdAt: Date.now(),
     };
+    if (subjectId) stu.subjectId = subjectId;
     db.data.students.push(stu);
     return stu;
   };
+  const numberTaken = (number, subjectId) =>
+    db.data.students.some((s) => s.active && s.number === number && (s.subjectId ?? null) === (subjectId ?? null));
+  const subjectFromReq = (req) => validSubjectId(db, req.query?.subjectId ?? req.body?.subjectId);
 
+  // ?subjectId= 로 과목 필터. 없으면 전체 (과목 이름 포함).
   r.get('/', (req, res) => {
-    const list = db.data.students
-      .filter((s) => s.active)
-      .sort((a, b) => a.number - b.number)
-      .map((s) => ({ ...s, presence: presence.snapshot(s.id) }));
+    const subjectId = subjectFromReq(req);
+    const list = studentsOf(db, subjectId)
+      .map((s) => ({ ...s, subjectName: subjectNameOf(db, s.subjectId), presence: presence.snapshot(s.id) }));
     res.json(list);
   });
 
   r.post('/', (req, res) => {
     const { number, name } = req.body ?? {};
+    const subjectId = subjectFromReq(req);
     const n = Number(String(number ?? '').trim());
     if (!String(name ?? '').trim() || !Number.isInteger(n) || n < 1 || n > 999) {
       return res.status(400).json({ error: '출석번호는 1~999 사이의 정수, 이름은 비어 있을 수 없습니다.' });
     }
-    if (db.data.students.some((s) => s.active && s.number === n)) {
-      return res.status(400).json({ error: `${n}번은 이미 등록되어 있습니다.` });
+    if (numberTaken(n, subjectId)) {
+      return res.status(400).json({ error: `${n}번은 이 과목에 이미 등록되어 있습니다.` });
     }
-    const stu = addStudent(n, name);
+    const stu = addStudent(n, name, subjectId);
     db.scheduleFlush();
     res.json(stu);
   });
 
-  // CSV 텍스트 업로드: "번호,이름" 형식 (헤더 행 자동 감지)
-  // [번호, 이름] 행 목록을 명단에 추가. 헤더·잘못된 행·중복은 건너뛰고 사유와 함께 보고.
-  const importRows = (rows) => {
+  // [번호, 이름] 행 목록을 명단에 추가 (CSV·엑셀 공용). 헤더·잘못된 행·중복은 건너뛰고 사유와 함께 보고.
+  const importRows = (rows, subjectId) => {
     const added = [];
     const skipped = [];
     for (const row of rows) {
@@ -96,14 +103,14 @@ export function studentsRouter({ db, presence }) {
       const name = String(nameRaw ?? '').trim();
       if (String(numRaw ?? '').trim() === '번호' && name === '이름') continue; // 헤더 행
       if (!Number.isInteger(number) || number < 1 || number > 999 || !name) { skipped.push(`${row.join(',')} (형식 오류)`); continue; }
-      if (db.data.students.some((s) => s.active && s.number === number)) {
+      if (numberTaken(number, subjectId)) {
         skipped.push(`${number},${name} (같은 번호 이미 등록)`);
         continue;
       }
-      added.push(addStudent(number, name));
+      added.push(addStudent(number, name, subjectId));
     }
     db.scheduleFlush();
-    return { addedCount: added.length, skipped };
+    return { addedCount: added.length, skipped, subjectName: subjectNameOf(db, subjectId) };
   };
 
   // 명단 양식(엑셀) 다운로드 (주의: '/:id' 라우트보다 먼저)
@@ -118,7 +125,7 @@ export function studentsRouter({ db, presence }) {
     if (typeof csv !== 'string' || !csv.trim()) {
       return res.status(400).json({ error: 'CSV 내용이 비어 있습니다.' });
     }
-    res.json(importRows(parseCsv(csv)));
+    res.json(importRows(parseCsv(csv), subjectFromReq(req)));
   });
 
   // 엑셀 명단 업로드 (양식 파일 또는 번호/이름 열이 있는 시트)
@@ -128,7 +135,7 @@ export function studentsRouter({ db, presence }) {
     try {
       const rows = parseStudentExcel(req.file.buffer);
       if (!rows.length) return res.status(400).json({ error: '시트에서 학생 행을 찾지 못했습니다. 양식 파일(번호 | 이름)을 사용하세요.' });
-      res.json(importRows(rows));
+      res.json(importRows(rows, subjectFromReq(req)));
     } catch (err) {
       res.status(400).json({ error: `엑셀 읽기 실패: ${err.message}` });
     }
@@ -150,15 +157,30 @@ export function studentsRouter({ db, presence }) {
     res.json({ ok: true });
   });
 
-  // 학생 배부용 코드표
+  // 학생 배부용 코드표 (?subjectId= 로 과목별)
   r.get('/codes.csv', (req, res) => {
-    const rows = [['출석번호', '이름', '접속코드']];
-    for (const s of db.data.students.filter((x) => x.active).sort((a, b) => a.number - b.number)) {
-      rows.push([s.number, s.name, s.code]);
+    const subjectId = subjectFromReq(req);
+    const rows = [['과목/학급', '출석번호', '이름', '접속코드']];
+    for (const s of studentsOf(db, subjectId)) {
+      rows.push([subjectNameOf(db, s.subjectId) ?? '', s.number, s.name, s.code]);
     }
+    const label = subjectNameOf(db, subjectId);
     res.set('Content-Type', 'text/csv; charset=utf-8');
-    res.set('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent('접속코드.csv'));
+    res.set('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(`접속코드${label ? `_${label}` : ''}.csv`));
     res.send(toCsv(rows));
+  });
+
+  // 학생을 다른 과목(학급)으로 옮기기 (subjectId 비우면 과목 없음)
+  r.put('/:id/subject', (req, res) => {
+    const stu = db.data.students.find((s) => s.id === req.params.id && s.active);
+    if (!stu) return res.status(404).json({ error: '학생을 찾을 수 없습니다.' });
+    const subjectId = validSubjectId(db, req.body?.subjectId);
+    if (numberTaken(stu.number, subjectId) && (stu.subjectId ?? null) !== (subjectId ?? null)) {
+      return res.status(400).json({ error: `${stu.number}번은 그 과목에 이미 있습니다.` });
+    }
+    if (subjectId) stu.subjectId = subjectId; else delete stu.subjectId;
+    db.scheduleFlush();
+    res.json({ ...stu, subjectName: subjectNameOf(db, stu.subjectId) });
   });
 
   return r;

@@ -29,7 +29,10 @@ export function createExamService(db, io) {
     exam.startedAt = Date.now();
     exam.endsAt = exam.startedAt + durationSec * 1000;
 
-    for (const stu of db.data.students.filter((s) => s.active)) {
+    // 응시 대상: 시험의 과목(학급) 학생. 과목이 없는 시험은 전체 학생.
+    const eligible = db.data.students.filter((s) => s.active && (!exam.subjectId || s.subjectId === exam.subjectId));
+    if (!eligible.length) throw new Error('이 시험의 과목(학급)에 등록된 학생이 없습니다. 학생 명단에서 해당 과목에 학생을 추가하세요.');
+    for (const stu of eligible) {
       if (attemptOf(exam.id, stu.id)) continue;
       const { questionOrder, choiceOrder } = buildAttemptOrders(exam, stu.id);
       db.data.attempts.push({

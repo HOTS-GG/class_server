@@ -4,7 +4,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import archiver from 'archiver';
 import { newId } from '../../../shared/src/id.js';
-import { subjectNameOf, validSubjectId } from './subjects.js';
+import { subjectNameOf, validSubjectId, studentsOf, studentBelongs } from './subjects.js';
 
 const FORBIDDEN_CHARS = /[\\/:*?"<>|]/g;
 
@@ -122,9 +122,7 @@ export function assignmentRouters({ db, io }) {
   teacher.get('/:id/submissions', (req, res) => {
     const a = db.data.assignments.find((x) => x.id === req.params.id);
     if (!a) return res.status(404).json({ error: '과제를 찾을 수 없습니다.' });
-    const rows = db.data.students
-      .filter((s) => s.active)
-      .sort((x, y) => x.number - y.number)
+    const rows = studentsOf(db, a.subjectId)
       .map((s) => {
         const sub = latestSubmission(a.id, s.id);
         return {
@@ -157,7 +155,7 @@ export function assignmentRouters({ db, io }) {
     const zip = archiver('zip', { zlib: { level: 6 } });
     zip.on('error', () => res.destroy());
     zip.pipe(res);
-    for (const s of db.data.students.filter((x) => x.active)) {
+    for (const s of studentsOf(db, a.subjectId)) {
       const sub = latestSubmission(a.id, s.id);
       if (!sub) continue;
       const folder = `${String(s.number).padStart(2, '0')}_${sanitizeName(s.name)}`;
@@ -172,9 +170,10 @@ export function assignmentRouters({ db, io }) {
   // ── 학생용 ─────────────────────────────
   const student = Router();
 
+  // 학생에게는 자기 과목(학급)의 과제와 과목 없는 과제만 보인다
   student.get('/', (req, res) => {
     const list = db.data.assignments
-      .filter((a) => a.status !== 'draft')
+      .filter((a) => a.status !== 'draft' && studentBelongs(req.student, a.subjectId))
       .map((a) => {
         const sub = latestSubmission(a.id, req.student.id);
         return {
@@ -195,7 +194,7 @@ export function assignmentRouters({ db, io }) {
   });
 
   student.get('/:id/files/:fileId', (req, res) => {
-    const a = db.data.assignments.find((x) => x.id === req.params.id && x.status !== 'draft');
+    const a = db.data.assignments.find((x) => x.id === req.params.id && x.status !== 'draft' && studentBelongs(req.student, x.subjectId));
     const f = a?.files.find((x) => x.fileId === req.params.fileId);
     if (!f) return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
     res.download(path.join(assignDir(a.id), f.storedName), f.name);
@@ -203,7 +202,7 @@ export function assignmentRouters({ db, io }) {
 
   student.post('/:id/submit', upload.array('files'), (req, res) => {
     const a = db.data.assignments.find((x) => x.id === req.params.id);
-    if (!a || a.status !== 'published') {
+    if (!a || a.status !== 'published' || !studentBelongs(req.student, a.subjectId)) {
       for (const f of req.files ?? []) fs.rmSync(f.path, { force: true });
       return res.status(400).json({ error: '제출을 받지 않는 과제입니다.' });
     }

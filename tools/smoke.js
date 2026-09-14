@@ -89,29 +89,46 @@ check('standalone에서는 세이브 전환 불가 안내', !!(await post('/api/
   fs.rmSync(wsDir, { recursive: true, force: true });
 }
 
-const imp = await post('/api/teacher/students/import', { csv: '번호,이름\n1,김민준\n2,이서연\n3,박도윤\n-4,음수번호\n0,영번호' });
-check('학생 3명 CSV 등록 (음수·0번은 건너뜀)', imp.addedCount === 3 && imp.skipped.some((s) => s.startsWith('-4')) && imp.skipped.some((s) => s.startsWith('0,')));
-// 명단 양식(엑셀) 다운로드 → 그대로 업로드 (예시 5명 중 1~3번은 이미 있어 건너뜀)
+// ── 과목/학급 ─────────────────────────────
+const subj = await post('/api/teacher/subjects', { name: '2-3 과학' });
+check('과목 생성', !!subj.id && subj.name === '2-3 과학');
+check('과목 이름 중복 거부', !!(await post('/api/teacher/subjects', { name: '2-3 과학' })).error);
+const subj2 = await post('/api/teacher/subjects', { name: '1-1 사회' });
+
+// ── 학생 명단 (과목별) ─────────────────────────────
+const imp = await post('/api/teacher/students/import', { csv: '번호,이름\n1,김민준\n2,이서연\n3,박도윤\n-4,음수번호\n0,영번호', subjectId: subj.id });
+check('학생 3명 CSV 등록 (음수·0번은 건너뜀, 과목 소속)', imp.addedCount === 3 && imp.subjectName === '2-3 과학'
+  && imp.skipped.some((s) => s.startsWith('-4')) && imp.skipped.some((s) => s.startsWith('0,')));
+// 명단 양식(엑셀) 다운로드 → 같은 과목에 업로드 (예시 5명 중 1~3번은 이미 있어 건너뜀)
 const stuTmpl = await fetch(`${base}/api/teacher/students/template.xlsx`);
 check('명단 양식 엑셀 다운로드', (stuTmpl.headers.get('content-type') ?? '').includes('spreadsheetml'));
 {
   const f = new FormData();
   f.append('file', new Blob([await stuTmpl.arrayBuffer()]), '학생명단양식.xlsx');
+  f.append('subjectId', subj.id);
   const r = await fetch(`${base}/api/teacher/students/import-excel`, { method: 'POST', body: f }).then((x) => x.json());
   check('엑셀 명단 불러오기 (2명 추가, 3건 번호 중복 건너뜀)', r.addedCount === 2 && r.skipped.length === 3);
-  for (const s of (await get('/api/teacher/students')).filter((x) => x.number >= 4)) {
+  for (const s of (await get(`/api/teacher/students?subjectId=${subj.id}`)).filter((x) => x.number >= 4)) {
     await fetch(`${base}/api/teacher/students/${s.id}`, { method: 'DELETE' });
   }
 }
-const negStu = await post('/api/teacher/students', { number: -1, name: '음수' });
-const dupStu = await post('/api/teacher/students', { number: 1, name: '중복' });
-check('출석번호 음수/중복 등록 거부', !!negStu.error && !!dupStu.error);
-const students = await get('/api/teacher/students');
-
-// ── 과목/학급 ─────────────────────────────
-const subj = await post('/api/teacher/subjects', { name: '2-3 과학' });
-check('과목 생성', !!subj.id && subj.name === '2-3 과학');
-check('과목 이름 중복 거부', !!(await post('/api/teacher/subjects', { name: '2-3 과학' })).error);
+const negStu = await post('/api/teacher/students', { number: -1, name: '음수', subjectId: subj.id });
+const dupStu = await post('/api/teacher/students', { number: 1, name: '중복', subjectId: subj.id });
+check('출석번호 음수/같은 과목 중복 등록 거부', !!negStu.error && !!dupStu.error);
+const other1 = await post('/api/teacher/students', { number: 1, name: '다른반1번', subjectId: subj2.id });
+check('다른 과목에는 같은 번호 허용', other1.number === 1 && other1.subjectId === subj2.id);
+const listA = await get(`/api/teacher/students?subjectId=${subj.id}`);
+const listB = await get(`/api/teacher/students?subjectId=${subj2.id}`);
+const listAll = await get('/api/teacher/students');
+check('과목별 명단 필터 (3명 / 1명 / 전체 4명)', listA.length === 3 && listB.length === 1 && listAll.length === 4
+  && listA.every((s) => s.subjectName === '2-3 과학'));
+const codesB = await fetch(`${base}/api/teacher/students/codes.csv?subjectId=${subj2.id}`).then((r) => r.text());
+check('접속코드표 과목별', codesB.includes('다른반1번') && !codesB.includes('김민준'));
+const moved = await fetch(`${base}/api/teacher/students/${other1.id}/subject`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subjectId: subj.id }) }).then((r) => r.json());
+check('같은 번호가 있는 과목으로 이동 거부', !!moved.error);
+const subjCounts = await get('/api/teacher/subjects');
+check('과목 목록에 학생 수', subjCounts.find((s) => s.id === subj.id)?.studentCount === 3);
+const students = listA;
 
 const auth1 = await post('/api/auth/student', { code: students[0].code });
 const auth2 = await post('/api/auth/student', { code: students[1].code });
@@ -145,6 +162,11 @@ const asg2 = await post('/api/teacher/assignments', { title: '삭제될 과제' 
 const delAsg = await fetch(`${base}/api/teacher/assignments/${asg2.id}`, { method: 'DELETE' }).then((r) => r.json());
 check('과제 삭제', delAsg.ok === true && !(await get('/api/teacher/assignments')).some((a) => a.id === asg2.id));
 check('학생 과제 목록에 과목 이름', (await get('/api/student/assignments', auth1.token))[0]?.subjectName === '2-3 과학');
+{
+  const authB = await post('/api/auth/student', { code: other1.code });
+  const seen = await get('/api/student/assignments', authB.token);
+  check('다른 과목 학생에게는 이 과제가 보이지 않음', Array.isArray(seen) && !seen.some((a) => a.id === asg.id));
+}
 
 // ── 시험 ─────────────────────────────
 const exam = await post('/api/teacher/exams', {
@@ -171,6 +193,13 @@ await post(`/api/teacher/exams/${exam.id}/start`, { durationMin: 1 });
 const v1 = await get('/api/student/exams/active', auth1.token);
 const v2 = await get('/api/student/exams/active', auth2.token);
 check('학생 응시 화면 수신', v1.exam?.id === exam.id);
+{
+  const authB = await post('/api/auth/student', { code: other1.code });
+  const vB = await get('/api/student/exams/active', authB.token);
+  check('다른 과목 학생은 이 시험 응시 대상 아님', vB.exam === null);
+  const monA = await get(`/api/teacher/exams/${exam.id}/monitor`);
+  check('감독 화면은 과목 학생 3명만', monA.rows.length === 3 && monA.exam.subjectName === '2-3 과학');
+}
 check('전체화면 잠금 기본 꺼짐', v1.exam?.lockdown === false);
 check('학생별 문항 순서 상이', v1.questions.map((q) => q.text).join() !== v2.questions.map((q) => q.text).join());
 check('정답 미노출(객관식+단답형+모범답안+채점기준)',
@@ -373,7 +402,9 @@ check('공개 취소 시 학생 조회 차단', !!hiddenRes.error);
 
 // ── 과목 삭제 → 시험은 "과목 없음"으로 남음 ─────────────────────────────
 const delSubj = await fetch(`${base}/api/teacher/subjects/${subj.id}`, { method: 'DELETE' }).then((r) => r.json());
-check('과목 삭제 후 시험 보존', delSubj.ok === true && (await get('/api/teacher/exams')).some((e) => e.id === exam.id && e.subjectName === null));
+check('과목 삭제 후 시험·학생 보존(과목 없음으로)', delSubj.ok === true
+  && (await get('/api/teacher/exams')).some((e) => e.id === exam.id && e.subjectName === null)
+  && (await get('/api/teacher/students')).filter((s) => !s.subjectId).length === 3);
 
 // ── 복제(재시험)와 삭제 ─────────────────────────────
 const dup = await post(`/api/teacher/exams/${exam.id}/duplicate`);

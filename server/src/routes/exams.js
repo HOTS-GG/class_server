@@ -6,7 +6,7 @@ import { toCsv } from '../../../shared/src/csv.js';
 import { newId } from '../../../shared/src/id.js';
 import { parseExamExcel, buildTemplateExcel, buildResultsExcel } from '../services/excelImport.js';
 import { ANSWER_FILE_TYPES, ANSWER_FILE_MAX_BYTES, ANSWER_FILE_EXT_LABEL } from '../services/aiGradingService.js';
-import { subjectNameOf, validSubjectId } from './subjects.js';
+import { subjectNameOf, validSubjectId, studentsOf } from './subjects.js';
 
 const FORBIDDEN_CHARS = /[\\/:*?"<>|]/g;
 const sanitizeName = (name) => String(name).split('').filter((ch) => ch.charCodeAt(0) >= 32).join('')
@@ -65,7 +65,7 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
   // 결과 행 구성 (CSV/XLSX 공용)
   const buildResultRows = (e) => {
     const typeLabel = { manual: '직접제출', auto: '시간종료', teacher: '교사종료' };
-    return db.data.students.filter((x) => x.active).sort((a, b) => a.number - b.number).map((s) => {
+    return studentsOf(db, e.subjectId).map((s) => {
       const att = examService.attemptOf(e.id, s.id);
       const p = presence.snapshot(s.id);
       const d = att?.scoreDetail;
@@ -266,9 +266,7 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
   teacher.get('/:id/monitor', (req, res) => {
     const e = examService.findExam(req.params.id);
     if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
-    const rows = db.data.students
-      .filter((s) => s.active)
-      .sort((a, b) => a.number - b.number)
+    const rows = studentsOf(db, e.subjectId)
       .map((s) => {
         const att = examService.attemptOf(e.id, s.id);
         return {
@@ -292,6 +290,7 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
         id: e.id, title: e.title, status: e.status, endsAt: e.endsAt ?? null,
         durationSec: e.durationSec ?? null, resultsPublished: e.resultsPublished === true,
         instantResults: e.instantResults === true,
+        subjectName: subjectNameOf(db, e.subjectId),
         essayCount: e.questions.filter((q) => q.type === 'essay').length,
         aiConfigured: aiGrader.isConfigured(),
         aiProgress: aiGrader.progressOf(e.id),

@@ -11,6 +11,7 @@ export function subjectsRouter({ db }) {
   const counts = (id) => ({
     examCount: db.data.exams.filter((e) => e.subjectId === id).length,
     assignmentCount: db.data.assignments.filter((a) => a.subjectId === id).length,
+    studentCount: db.data.students.filter((s) => s.active && s.subjectId === id).length,
   });
 
   r.get('/', (req, res) => {
@@ -45,7 +46,7 @@ export function subjectsRouter({ db }) {
     res.json(s);
   });
 
-  // 삭제: 소속 시험·과제는 "과목 없음"으로 남긴다 (데이터는 지우지 않음)
+  // 삭제: 소속 시험·과제·학생은 "과목 없음"으로 남긴다 (데이터는 지우지 않음)
   r.delete('/:id', (req, res) => {
     const idx = db.data.subjects.findIndex((x) => x.id === req.params.id);
     if (idx < 0) return res.status(404).json({ error: '과목을 찾을 수 없습니다.' });
@@ -53,6 +54,7 @@ export function subjectsRouter({ db }) {
     db.data.subjects.splice(idx, 1);
     for (const e of db.data.exams) if (e.subjectId === id) delete e.subjectId;
     for (const a of db.data.assignments) if (a.subjectId === id) delete a.subjectId;
+    for (const s of db.data.students) if (s.subjectId === id) delete s.subjectId;
     db.scheduleFlush();
     res.json({ ok: true });
   });
@@ -65,3 +67,11 @@ export const subjectNameOf = (db, subjectId) =>
   db.data.subjects?.find((s) => s.id === subjectId)?.name ?? null;
 export const validSubjectId = (db, subjectId) =>
   (subjectId && db.data.subjects?.some((s) => s.id === subjectId)) ? subjectId : undefined;
+
+// 과목(학급) 소속 학생 목록. subjectId가 없으면(과목 없음) 전체 학생.
+// 시험·과제도 같은 규칙: 과목이 지정된 시험/과제는 그 과목 학생에게만, 과목 없는 것은 전체에게.
+export const studentsOf = (db, subjectId) =>
+  db.data.students
+    .filter((s) => s.active && (!subjectId || s.subjectId === subjectId))
+    .sort((a, b) => a.number - b.number);
+export const studentBelongs = (student, subjectId) => !subjectId || student.subjectId === subjectId;
