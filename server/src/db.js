@@ -15,14 +15,18 @@ const DEFAULT_DATA = {
 };
 
 // lowdb(JSON) + append-only JSONL 이중 저장.
-// - db.json: 전체 상태. 쓰기는 2초 디바운스(잦은 답안 저장으로 인한 전체 재기록 방지)
-// - events/*.jsonl: 답안·이탈로그를 즉시 append → 서버가 죽어도 리플레이로 복구
-export async function openDb(dataDir) {
+// - 세이브 파일(dbFile, 기본 dataDir/db.json): 명단·과목·과제·시험·응시 기록·설정 전체. 쓰기는 2초 디바운스.
+// - dataDir/events/*.jsonl: 답안·이탈로그를 즉시 append → 서버가 죽어도 리플레이로 복구
+// - dataDir/files/: 과제 배부 파일·제출물·답안 첨부
+// 교사 앱에서는 "우리반.classdb"(dbFile) + "우리반.files/"(dataDir) 쌍으로 쓴다.
+export async function openDb(dataDir, { dbFile } = {}) {
   for (const sub of ['events', path.join('files', 'assignments'), path.join('files', 'submissions'), path.join('files', 'exam-answers'), 'tmp']) {
     fs.mkdirSync(path.join(dataDir, sub), { recursive: true });
   }
+  const file = dbFile ?? path.join(dataDir, 'db.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
 
-  const low = new Low(new JSONFile(path.join(dataDir, 'db.json')), structuredClone(DEFAULT_DATA));
+  const low = new Low(new JSONFile(file), structuredClone(DEFAULT_DATA));
   await low.read();
   low.data = { ...structuredClone(DEFAULT_DATA), ...(low.data ?? {}) };
 
@@ -79,5 +83,5 @@ export async function openDb(dataDir) {
     return out;
   };
 
-  return { data: low.data, dataDir, scheduleFlush, flushNow, appendEvent, readEvents };
+  return { data: low.data, dataDir, file, scheduleFlush, flushNow, appendEvent, readEvents };
 }

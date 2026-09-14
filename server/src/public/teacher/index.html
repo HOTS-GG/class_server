@@ -11,7 +11,7 @@
 </head>
 <body>
 <header>
-  <h1>교실 평가 시스템</h1>
+  <h1>교실 평가 시스템 <span id="header-ws" class="muted" style="font-weight:400;font-size:13px"></span></h1>
   <div class="header-right">
     <div id="server-info" class="server-info"></div>
     <label class="scale-ctl" title="화면 크기">🔍 <select data-scale-select></select></label>
@@ -207,6 +207,16 @@
         <span class="sep"></span>
         <button id="btn-unlock-all" class="danger">전체 학생 잠금 해제 (수업 종료)</button>
       </div>
+    </div>
+    <h2>세이브 파일</h2>
+    <div class="card">
+      <div class="row" style="flex-wrap:wrap">
+        <b id="ws-name"></b>
+        <span id="ws-path" class="muted" style="word-break:break-all"></span>
+        <span class="sep"></span>
+        <button id="btn-ws-switch">다른 세이브 열기</button>
+      </div>
+      <p class="muted">세이브 파일에는 학생 명단·과목·과제·시험·채점 결과·설정(AI 키 포함)이 들어 있습니다. 첨부 파일은 같은 위치의 <code>이름.files</code> 폴더에 저장되므로 백업할 때 함께 복사하세요.</p>
     </div>
     <h2>서버 정보</h2>
     <div class="card"><pre id="tools-server-info"></pre></div>

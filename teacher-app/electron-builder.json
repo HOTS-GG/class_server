@@ -18,6 +18,9 @@
   "win": {
     "target": ["nsis"]
   },
+  "fileAssociations": [
+    { "ext": "classdb", "name": "교실 평가 세이브", "description": "교실 평가 시스템 세이브 파일", "role": "Editor" }
+  ],
   "nsis": {
     "oneClick": true,
     "perMachine": false,

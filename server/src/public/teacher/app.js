@@ -78,8 +78,14 @@ async function loadServerInfo() {
     const info = await api('GET', '/api/teacher/server-info');
     const addrText = info.addresses.map((a) => `${a}:${info.httpPort}`).join('  |  ');
     $('#server-info').innerHTML = `학생 접속 주소: <b>${esc(addrText) || '네트워크 없음'}</b>`;
+    $('#header-ws').textContent = info.workspace ? `📁 ${info.workspace.name}` : '';
+    $('#ws-name').textContent = info.workspace?.name ?? '';
+    $('#ws-path').textContent = info.workspace?.file ?? '';
+    $('#btn-ws-switch').disabled = !info.canSwitchWorkspace;
+    $('#btn-ws-switch').title = info.canSwitchWorkspace ? '' : '교사용 프로그램(Electron)에서만 전환할 수 있습니다.';
     $('#tools-server-info').textContent =
       `서버 이름   : ${info.name}\n` +
+      `세이브 파일 : ${info.workspace?.file ?? ''}\n` +
       `버전       : ${info.version}\n` +
       `HTTP 포트  : ${info.httpPort}\n` +
       `자동탐색 포트: ${info.udpPort} (UDP)\n` +
@@ -1070,6 +1076,13 @@ $('#btn-save-grades').addEventListener('click', async () => {
 });
 
 // ── 도구 ─────────────────────────────
+$('#btn-ws-switch').addEventListener('click', async () => {
+  if (!await csDialog.confirm('다른 세이브 파일을 열까요?\n현재 세이브는 저장된 상태로 닫히고, 접속 중인 학생은 연결이 끊깁니다.', { title: '세이브 전환', okText: '열기' })) return;
+  try {
+    await api('POST', '/api/teacher/workspace/switch');
+  } catch (err) { toast(err.message, 'warn'); }
+});
+
 $('#btn-unlock-code').addEventListener('click', async () => {
   try {
     const { code } = await api('POST', '/api/teacher/unlock-code');

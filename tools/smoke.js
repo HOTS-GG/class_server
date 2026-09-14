@@ -71,6 +71,23 @@ const post = (p, body, token) => fetch(base + p, {
 // ── 기본/명단 ─────────────────────────────
 const health = await get('/api/health');
 check('서버 health', health.ok === true);
+const sinfo = await get('/api/teacher/server-info');
+check('서버 정보에 세이브 파일 경로', sinfo.workspace?.file?.endsWith('db.json') && sinfo.canSwitchWorkspace === false);
+check('standalone에서는 세이브 전환 불가 안내', !!(await post('/api/teacher/workspace/switch')).error);
+
+// 세이브 파일 분리 저장(우리반.classdb + 우리반.files/) 확인
+{
+  const wsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'class-ws-'));
+  const dbFile = path.join(wsDir, '우리반.classdb');
+  const s2 = await createClassServer({ dataDir: path.join(wsDir, '우리반.files'), dbFile, httpPort: port + 1, enableDiscovery: false });
+  await s2.start();
+  const r = await fetch(`http://127.0.0.1:${port + 1}/api/teacher/students`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ number: 7, name: '세이브' }) }).then((x) => x.json());
+  await s2.stop();
+  const saved = JSON.parse(fs.readFileSync(dbFile, 'utf8'));
+  check('세이브 파일(.classdb)에 저장 + files 폴더 생성', r.number === 7 && saved.students?.[0]?.name === '세이브'
+    && fs.existsSync(path.join(wsDir, '우리반.files', 'events')) && s2.workspace.name === '우리반');
+  fs.rmSync(wsDir, { recursive: true, force: true });
+}
 
 const imp = await post('/api/teacher/students/import', { csv: '번호,이름\n1,김민준\n2,이서연\n3,박도윤\n-4,음수번호\n0,영번호' });
 check('학생 3명 CSV 등록 (음수·0번은 건너뜀)', imp.addedCount === 3 && imp.skipped.some((s) => s.startsWith('-4')) && imp.skipped.some((s) => s.startsWith('0,')));

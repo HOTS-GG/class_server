@@ -14,8 +14,8 @@
     "test": "node --test tests/*.test.js",
     "smoke": "node tools/smoke.js",
     "server": "node server/src/standalone.js",
-    "teacher": "electron teacher-app/src/main.js",
-    "student": "electron student-client/src/main.js --dev",
+    "teacher": "node tools/launch-electron.js teacher-app/src/main.js",
+    "student": "node tools/launch-electron.js student-client/src/main.js --dev",
     "simulate": "node tools/simulate.js",
     "build:teacher": "electron-builder --config teacher-app/electron-builder.json",
     "build:student": "electron-builder --config student-client/electron-builder.json"

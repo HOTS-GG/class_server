@@ -1,5 +1,6 @@
 import http from 'node:http';
 import os from 'node:os';
+import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -36,13 +37,20 @@ export function lanAddresses() {
 
 export async function createClassServer({
   dataDir,
+  dbFile = null,   // 세이브 파일 경로 (없으면 dataDir/db.json)
   httpPort = DEFAULT_HTTP_PORT,
   udpPort = DEFAULT_UDP_PORT,
   enableDiscovery = true,
   aiFetch = fetch, // 테스트에서 OpenRouter 호출을 가짜로 바꿀 때 사용
 } = {}) {
   if (!dataDir) throw new Error('dataDir가 필요합니다.');
-  const db = await openDb(dataDir);
+  const db = await openDb(dataDir, { dbFile });
+  const events = new EventEmitter(); // 호스트(Electron)에 알리는 이벤트: 'workspace:switch'
+  const workspace = {
+    file: db.file,
+    dataDir,
+    name: path.basename(db.file).replace(/\.(classdb|json)$/i, ''),
+  };
 
   const app = express();
   const httpServer = http.createServer(app);
@@ -120,7 +128,21 @@ export async function createClassServer({
       udpPort,
       addresses: lanAddresses(),
       version: APP_VERSION,
+      workspace,
+      canSwitchWorkspace: events.listenerCount('workspace:switch') > 0,
     });
+  });
+
+  // 다른 세이브 파일 열기 — Electron 교사 앱이 이 이벤트를 받아 서버를 내리고 시작 화면을 다시 띄운다
+  app.post('/api/teacher/workspace/switch', auth.teacherMiddleware, (req, res) => {
+    if (!events.listenerCount('workspace:switch')) {
+      return res.status(400).json({ error: '세이브 전환은 교사용 프로그램(Electron)에서만 할 수 있습니다.' });
+    }
+    if (db.data.exams.some((e) => e.status === 'active')) {
+      return res.status(400).json({ error: '진행 중인 시험이 있습니다. 먼저 종료하세요.' });
+    }
+    res.json({ ok: true });
+    setTimeout(() => events.emit('workspace:switch'), 200);
   });
 
   app.put('/api/teacher/settings', auth.teacherMiddleware, (req, res) => {
@@ -244,5 +266,5 @@ export async function createClassServer({
     await db.flushNow();
   };
 
-  return { app, io, httpServer, db, auth, presence, examService, aiGrader, start, stop, httpPort };
+  return { app, io, httpServer, db, auth, presence, examService, aiGrader, events, workspace, start, stop, httpPort };
 }
