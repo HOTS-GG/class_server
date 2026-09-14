@@ -666,6 +666,28 @@ function openUnlockModal() {
   $('#in-unlock').focus();
 }
 
+// 로그아웃: 저장된 학생 정보를 지우고 접속 화면으로 (공용 PC에서 다음 학생이 자기 코드로 접속하도록)
+function clearSession() {
+  socket?.disconnect();
+  socket = null;
+  token = '';
+  student = null;
+  examData = null;
+  localStorage.removeItem('cs_token');
+  localStorage.removeItem('cs_student');
+  $('#in-code').value = '';
+  $('#connect-msg').textContent = '';
+  if (serverUrl) $('#in-server').value = serverUrl.replace(/^https?:\/\//, '');
+  showScreen('screen-connect');
+  $('#in-code').focus();
+}
+
+$('#btn-logout').addEventListener('click', async () => {
+  if (examLocked) { openUnlockModal(); return; }
+  if (!await csDialog.confirm(`${student?.number}번 ${student?.name} 계정에서 로그아웃할까요?\n다음 학생은 자기 접속 코드로 접속하면 됩니다.`, { title: '로그아웃', okText: '로그아웃' })) return;
+  clearSession();
+});
+
 $('#btn-exit').addEventListener('click', async () => {
   if (examLocked) { openUnlockModal(); return; }
   await window.classClient.quitApp();
@@ -688,15 +710,25 @@ $('#btn-unlock-ok').addEventListener('click', async () => {
   }
 });
 
-// ── 시작: 저장된 세션으로 자동 재접속 ─────────────────────────────
+// ── 시작 ─────────────────────────────
+// 자동 재접속은 "그 학생의 시험이 진행 중"일 때만 한다 (프로그램이 꺼져도 시험을 이어가기 위해).
+// 그 외에는 공용 PC에서 이전 학생으로 자동 로그인되지 않도록 접속 화면을 보여 준다(서버 주소만 기억).
 (async () => {
   if (serverUrl && token && student) {
     try {
       const health = await fetch(`${serverUrl}/api/health`).then((r) => r.json());
       serverOffset = health.serverNow - Date.now();
-      await afterLogin();
-      return;
-    } catch { /* 서버 없음 → 접속 화면 */ }
+      const active = await api('GET', '/api/student/exams/active');
+      if (active.exam && !active.submitted) {
+        await afterLogin();
+        return;
+      }
+    } catch { /* 서버 없음 또는 토큰 만료 → 접속 화면 */ }
+    token = '';
+    student = null;
+    localStorage.removeItem('cs_token');
+    localStorage.removeItem('cs_student');
   }
+  if (serverUrl) $('#in-server').value = serverUrl.replace(/^https?:\/\//, '');
   showScreen('screen-connect');
 })();
