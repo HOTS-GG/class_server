@@ -207,6 +207,8 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
     db.data.exams.splice(idx, 1);
     db.data.attempts = db.data.attempts.filter((a) => a.examId !== examId);
     fs.rmSync(path.join(db.dataDir, 'files', 'exam-answers', examId), { recursive: true, force: true });
+    db.deleteEvents(`answers-${examId}`);
+    db.deleteEvents(`focus-${examId}`);
     db.scheduleFlush();
     res.json({ ok: true });
   });
@@ -294,6 +296,7 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
         essayCount: e.questions.filter((q) => q.type === 'essay').length,
         aiConfigured: aiGrader.isConfigured(),
         aiProgress: aiGrader.progressOf(e.id),
+        aiUsage: aiGrader.usageOf(e),
       },
       serverNow: Date.now(),
       rows,
@@ -396,6 +399,21 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
     res.json({ ok: true, applied, score: att.score, scoreDetail: att.scoreDetail });
   });
 
+  // 일관성 검사: 무작위 표본을 다시 채점해 편차를 본다 (저장하지 않음)
+  teacher.post('/:id/ai-consistency', async (req, res) => {
+    const e = examService.findExam(req.params.id);
+    if (!e) return res.status(404).json({ error: '시험을 찾을 수 없습니다.' });
+    try {
+      const sample = Math.max(1, Math.min(10, Number(req.body?.sample) || 3));
+      const r = await aiGrader.checkConsistency(e, { sample });
+      e.aiConsistency = { checkedAt: r.checkedAt, sampled: r.sampled, maxDiffRatio: r.maxDiffRatio, meanDiff: r.meanDiff, verdict: r.verdict };
+      db.scheduleFlush();
+      res.json({ ok: true, ...r });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // AI 점수 전체 반영 (교사가 직접 준 점수는 유지)
   teacher.post('/:id/apply-ai', (req, res) => {
     const e = examService.findExam(req.params.id);
@@ -483,6 +501,17 @@ export function examRouters({ db, io, presence, examService, aiGrader }) {
     const att = examService.attemptOf(e.id, req.student.id);
     if (!att) return res.status(404).json({ error: '응시 기록이 없습니다.' });
     res.json(examService.buildResultPayload(e, att));
+  });
+
+  // 여러 답안 일괄 동기화 (재접속 후 밀린 답안 전송, 제출 직전 전체 확인). 더 최신 것만 반영.
+  student.post('/:id/sync', (req, res) => {
+    try {
+      const e = examService.findExam(req.params.id);
+      const r = examService.syncAnswers(e, req.student, req.body?.answers ?? {});
+      res.json({ ok: true, ...r });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   // 소켓이 끊겼을 때의 HTTP 폴백

@@ -52,6 +52,7 @@ const SYSTEM_PROMPT = `당신은 대한민국 학교 교사를 돕는 서술형 
 - feedback은 학생이 직접 읽는 글입니다. 존댓말로, 잘한 점 1가지와 보완할 점 1~2가지를 3문장 이내로 씁니다. 학생 이름은 모르므로 언급하지 않습니다.
 - confidence는 채점 확신도(0~1)입니다. 채점기준이 모호하거나 답안이 판단하기 어려우면 낮게 줍니다.
 - 첨부 파일이 있으면 파일 내용을 답안의 일부로 봅니다. summary에 파일 내용의 핵심을 2~3문장으로 요약합니다. 파일이 없으면 summary는 빈 문자열입니다.
+- [교사 채점 예시]가 있으면 그것이 이 교사의 실제 기준입니다. 예시 답안과 점수의 관계에 맞춰 엄격함의 정도를 맞추고, 예시와 비슷한 수준의 답안에는 비슷한 점수를 줍니다.
 - 반드시 JSON만 출력합니다.`;
 
 const RESPONSE_SCHEMA = {
@@ -87,11 +88,22 @@ const RESPONSE_SCHEMA = {
 // ── 프롬프트 ─────────────────────────────
 
 // 학생 개인정보 없이 문항/기준/답안만으로 사용자 메시지를 만든다.
-export function buildUserMessage(question, answer) {
+// examples: 교사가 직접 채점한 다른 답안들 [{ text, score, feedback }] — few-shot 보정용 (이름·번호 없음)
+export function buildUserMessage(question, answer, examples = []) {
   const text = String(answer?.text ?? '').slice(0, MAX_ANSWER_CHARS);
   const rubric = String(question.rubric ?? '').trim() || '(채점기준 없음 — 모범답안과 문항을 기준으로 판단)';
   const model = String(question.modelAnswer ?? '').trim() || '(모범답안 없음)';
   const fileNote = answer?.file ? `\n[첨부 파일] ${answer.file.name} — 파일 내용도 답안으로 평가할 것` : '';
+  const exampleBlock = examples.length ? [
+    '',
+    `[교사 채점 예시] (같은 문항을 교사가 직접 채점한 다른 학생의 답안 ${examples.length}개)`,
+    ...examples.flatMap((ex, i) => [
+      `예시 ${i + 1} — 교사 점수 ${ex.score}/${question.points}점${ex.feedback ? ` · 교사 피드백: ${ex.feedback}` : ''}`,
+      '<<<예시 답안 시작>>>',
+      String(ex.text ?? '').slice(0, 800),
+      '<<<예시 답안 끝>>>',
+    ]),
+  ] : [];
   return [
     `[문항] (배점 ${question.points}점)`,
     question.text,
@@ -101,6 +113,7 @@ export function buildUserMessage(question, answer) {
     '',
     '[모범답안]',
     model,
+    ...exampleBlock,
     '',
     '[학생 답안]',
     '<<<답안 시작>>>',
@@ -109,6 +122,28 @@ export function buildUserMessage(question, answer) {
     fileNote,
   ].join('\n');
 }
+
+// 교사가 직접 채점한 답안을 few-shot 예시로 고른다: 같은 문항, 텍스트 답안, manualGrades 있음, 본인 제외.
+// 점수가 다양하도록 최고·최저·중간 순으로 최대 max개.
+export function pickTeacherExamples(db, exam, question, currentAttempt, max = 3) {
+  const cands = [];
+  for (const att of db.data.attempts) {
+    if (att.examId !== exam.id || att.id === currentAttempt?.id || !att.submittedAt) continue;
+    const m = att.manualGrades?.[question.id];
+    if (m === undefined || m === null || m === '' || !Number.isFinite(Number(m))) continue;
+    const text = String(att.answers?.[question.id]?.text ?? '').trim();
+    if (!text || att.answers?.[question.id]?.file) continue;
+    cands.push({ text, score: Number(m), feedback: String(att.feedback?.[question.id] ?? '').slice(0, 300) });
+  }
+  if (cands.length <= max) return cands;
+  cands.sort((a, b) => b.score - a.score);
+  const picked = [cands[0], cands[cands.length - 1], cands[Math.floor(cands.length / 2)]];
+  return [...new Set(picked)].slice(0, max);
+}
+
+// 토큰 수 × 모델 단가($/1M) → 예상 비용(USD)
+export const estimateCost = (promptTokens, completionTokens, price) =>
+  price ? Math.round(((promptTokens ?? 0) * price.prompt + (completionTokens ?? 0) * (price.completion ?? 0)) / 1e6 * 1e6) / 1e6 : null;
 
 function fileContentParts(filePath, fileMeta, pdfEngine) {
   const ext = path.extname(fileMeta.name).toLowerCase();
@@ -170,9 +205,9 @@ export function parseGradeResponse(content, question) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function requestGrade({
-  apiKey, model, question, answer, filePath = null, pdfEngine, fetchImpl = fetch, signal,
+  apiKey, model, question, answer, filePath = null, pdfEngine, fetchImpl = fetch, signal, examples = [],
 }) {
-  const userParts = [{ type: 'text', text: buildUserMessage(question, answer) }];
+  const userParts = [{ type: 'text', text: buildUserMessage(question, answer, examples) }];
   let plugins = [];
   if (answer?.file && filePath) {
     const f = fileContentParts(filePath, answer.file, pdfEngine);
@@ -289,11 +324,12 @@ export async function fetchModelList(fetchImpl = fetch, apiKey = '') {
 
 // ── 서비스 ─────────────────────────────
 
-export function createAiGrader({ db, io, examService, fetchImpl = fetch }) {
+export function createAiGrader({ db, io, examService, fetchImpl = fetch, priceLookup = async () => null }) {
   const running = new Map(); // examId -> { total, done, failed, startedAt }
 
   const teacherNs = () => io.of('/teacher');
   const settings = () => db.data.settings.ai ?? {};
+  const currentKey = () => (typeof db.getApiKey === 'function' ? db.getApiKey() : String(settings().apiKey ?? '').trim());
 
   const answerFilePath = (exam, attempt, qid) => {
     const f = attempt.answers?.[qid]?.file;
@@ -305,9 +341,21 @@ export function createAiGrader({ db, io, examService, fetchImpl = fetch }) {
 
   function requireConfig() {
     const s = settings();
-    const apiKey = String(s.apiKey ?? '').trim();
+    const apiKey = currentKey();
     if (!apiKey) throw new Error('OpenRouter API 키가 설정되지 않았습니다. [도구] 탭의 AI 채점 설정에서 입력하세요.');
     return { apiKey, model: String(s.model ?? '').trim() || DEFAULT_AI_MODEL, pdfEngine: s.pdfEngine || DEFAULT_PDF_ENGINE };
+  }
+
+  // 한 답안을 채점(저장하지 않음). 교사 채점 예시(few-shot)와 비용 추정을 붙인다.
+  async function gradeOne(exam, attempt, q, conf, { useExamples = true } = {}) {
+    const answer = attempt.answers?.[q.id];
+    const examples = useExamples ? pickTeacherExamples(db, exam, q, attempt) : [];
+    const r = await requestGrade({
+      apiKey: conf.apiKey, model: conf.model, pdfEngine: conf.pdfEngine,
+      question: q, answer, filePath: answerFilePath(exam, attempt, q.id), fetchImpl, examples,
+    });
+    const price = await priceLookup(r.model ?? conf.model);
+    return { ...r, exampleCount: examples.length, costUsd: estimateCost(r.promptTokens, r.completionTokens, price) };
   }
 
   // 한 학생의 서술형 문항들을 채점. questionIds를 주면 그 문항만.
@@ -324,14 +372,11 @@ export function createAiGrader({ db, io, examService, fetchImpl = fetch }) {
         entry = {
           status: 'done', score: 0, maxScore: q.points, criteria: [], confidence: 1,
           feedback: '작성한 답안이 없습니다.', summary: '', model: conf.model,
-          promptTokens: 0, completionTokens: 0, gradedAt: Date.now(), skippedReason: 'empty',
+          promptTokens: 0, completionTokens: 0, costUsd: 0, gradedAt: Date.now(), skippedReason: 'empty',
         };
       } else {
         try {
-          const r = await requestGrade({
-            apiKey: conf.apiKey, model: conf.model, pdfEngine: conf.pdfEngine,
-            question: q, answer, filePath: answerFilePath(exam, attempt, q.id), fetchImpl,
-          });
+          const r = await gradeOne(exam, attempt, q, conf);
           entry = { status: 'done', ...r, gradedAt: Date.now() };
         } catch (err) {
           entry = { status: 'error', error: err.message, gradedAt: Date.now(), model: conf.model };
@@ -453,10 +498,63 @@ export function createAiGrader({ db, io, examService, fetchImpl = fetch }) {
 
   const progressOf = (examId) => running.get(examId) ?? null;
 
-  const isConfigured = () => !!String(settings().apiKey ?? '').trim();
+  const isConfigured = () => !!currentKey();
+
+  // 사용량·비용 합계 (시험 하나 또는 세이브 전체)
+  function sumUsage(attempts) {
+    const u = { calls: 0, promptTokens: 0, completionTokens: 0, costUsd: 0, costKnown: true };
+    for (const att of attempts) {
+      for (const g of Object.values(att.aiGrades ?? {})) {
+        if (g?.status !== 'done' || g.skippedReason) continue;
+        u.calls += 1;
+        u.promptTokens += g.promptTokens ?? 0;
+        u.completionTokens += g.completionTokens ?? 0;
+        if (typeof g.costUsd === 'number') u.costUsd += g.costUsd; else u.costKnown = false;
+      }
+    }
+    u.costUsd = Math.round(u.costUsd * 1e4) / 1e4;
+    return u;
+  }
+  const usageOf = (exam) => sumUsage(db.data.attempts.filter((a) => a.examId === exam.id));
+  const usageTotal = () => sumUsage(db.data.attempts);
+
+  // 일관성 검사: 이미 채점된 답안 중 무작위 표본을 다시 채점해(저장하지 않음) 원래 점수와 비교한다.
+  async function checkConsistency(exam, { sample = 3 } = {}) {
+    if (running.has(exam.id)) throw new Error('AI 채점이 진행 중입니다. 끝난 뒤 검사하세요.');
+    const conf = requireConfig();
+    const pool = [];
+    for (const att of db.data.attempts.filter((a) => a.examId === exam.id && a.submittedAt)) {
+      for (const q of gradableQuestions(exam)) {
+        const g = att.aiGrades?.[q.id];
+        if (g?.status === 'done' && !g.skippedReason && att.answers?.[q.id]?.text?.trim()) pool.push({ att, q, g });
+      }
+    }
+    if (!pool.length) throw new Error('다시 채점할 AI 채점 답안이 없습니다. 먼저 AI 채점을 실행하세요.');
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    const picked = pool.slice(0, Math.min(sample, pool.length));
+    const students = new Map((db.data.students ?? []).map((s) => [s.id, s]));
+    const items = [];
+    for (const { att, q, g } of picked) {
+      const stu = students.get(att.studentId);
+      const qIndex = exam.questions.findIndex((x) => x.id === q.id) + 1;
+      try {
+        const r = await gradeOne(exam, att, q, conf, { useExamples: false });
+        const diff = Math.round(Math.abs(r.score - g.score) * 10) / 10;
+        items.push({ attemptId: att.id, number: stu?.number ?? null, name: stu?.name ?? '', questionNo: qIndex, points: q.points,
+          original: g.score, regraded: r.score, diff, diffRatio: q.points ? Math.round((diff / q.points) * 100) / 100 : 0, costUsd: r.costUsd });
+      } catch (err) {
+        items.push({ attemptId: att.id, number: stu?.number ?? null, name: stu?.name ?? '', questionNo: qIndex, points: q.points, original: g.score, error: err.message });
+      }
+    }
+    const ok = items.filter((x) => !x.error);
+    const maxRatio = ok.length ? Math.max(...ok.map((x) => x.diffRatio)) : 0;
+    const meanDiff = ok.length ? Math.round((ok.reduce((s, x) => s + x.diff, 0) / ok.length) * 10) / 10 : 0;
+    const verdict = !ok.length ? 'error' : maxRatio > 0.2 ? 'warn' : 'ok';
+    return { items, sampled: items.length, maxDiffRatio: maxRatio, meanDiff, verdict, checkedAt: Date.now() };
+  }
 
   return {
     gradeAttempt, startExamGrading, applyAiGrades, applyAllAiGrades, summarize, progressOf,
-    requireConfig, isConfigured,
+    requireConfig, isConfigured, usageOf, usageTotal, checkConsistency,
   };
 }

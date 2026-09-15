@@ -79,6 +79,7 @@ header button.pill { cursor: pointer; border: none; font-size: 12px; padding: 3p
 
 .exam-header { position: sticky; top: 0; z-index: 10; }
 .timer { font-size: 20px; font-weight: 700; color: var(--clr-warn-text); }
+#save-status.unsaved { color: var(--clr-warn-text); font-weight: 700; }
 .timer.danger { color: var(--clr-red-text); }
 .progress-nav {
   display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 20px;

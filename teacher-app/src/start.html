@@ -68,8 +68,24 @@
           <div class="name">${esc(r.name)} ${r.legacy ? '<span class="pill">이전 버전 데이터</span>' : ''} ${r.exists ? '' : '<span class="pill off">파일 없음</span>'}</div>
           <div class="path">${esc(r.file)}${r.lastOpened ? ` · ${fmt(r.lastOpened)}` : ''}</div>
         </div>
+        <button class="small" data-restore="${esc(r.file)}" title="백업에서 되돌리기">복구</button>
         <button class="small" data-forget="${esc(r.file)}" title="목록에서 제거 (파일은 삭제되지 않음)">✕</button>
       </div>`).join('');
+  }
+
+  // 백업 복구: 이 세이브의 백업 폴더 목록을 보여 주고 고르면 세이브를 그 사본으로 되돌린다
+  async function openRestore(file) {
+    const list = await window.startApi.backups(file);
+    if (!list.length) { setStatus('이 세이브에는 아직 백업이 없습니다. 세이브를 열면 시험 시작·종료 때와 하루 한 번 자동으로 만들어집니다.'); return; }
+    const reasonKo = { manual: '수동', daily: '일일', 'exam-start': '시험 시작', 'exam-end': '시험 종료' };
+    const box = $('#recent');
+    box.innerHTML = `<div class="item" style="cursor:default;background:var(--bg-2)"><div class="grow"><div class="name">백업에서 복구 — ${esc(file.split(/[\\/]/).pop())}</div>
+        <div class="path">고르면 현재 세이브를 그 시점으로 되돌립니다. 되돌리기 전 현재 파일은 .before-restore 사본으로 남습니다.</div></div>
+        <button class="small" id="btn-restore-cancel">취소</button></div>` +
+      list.map((b) => `<div class="item" data-restore-path="${esc(b.path)}" data-file="${esc(file)}">
+        <div class="grow"><div class="name">${esc(b.when)} <span class="pill">${esc(reasonKo[b.reason] ?? b.reason)}</span></div>
+        <div class="path">${esc(b.name)} · ${Math.max(1, Math.round(b.size / 1024))}KB</div></div></div>`).join('');
+    $('#btn-restore-cancel').addEventListener('click', loadRecent);
   }
 
   async function openFile(file) {
@@ -91,8 +107,19 @@
   $('#recent').addEventListener('click', async (e) => {
     const forget = e.target.closest('button[data-forget]');
     if (forget) { await window.startApi.forget(forget.dataset.forget); await loadRecent(); return; }
-    const item = e.target.closest('.item');
-    if (item) openFile(item.dataset.file);
+    const restoreBtn = e.target.closest('button[data-restore]');
+    if (restoreBtn) { await openRestore(restoreBtn.dataset.restore); return; }
+    const pick = e.target.closest('.item[data-restore-path]');
+    if (pick) {
+      setStatus('복구 중…', true);
+      const r = await window.startApi.restore(pick.dataset.file, pick.dataset.restorePath);
+      if (!r.ok) { setStatus(r.error); return; }
+      setStatus('복구했습니다. 세이브를 엽니다…', true);
+      openFile(pick.dataset.file);
+      return;
+    }
+    const item = e.target.closest('.item[data-file]');
+    if (item && !item.dataset.restorePath) openFile(item.dataset.file);
   });
   window.startApi.onStatus((p) => { setStatus(p.message, p.ok); if (!p.ok) busy = false; });
   window.startApi.version?.().then((v) => { $('#ver').textContent = v ? `v${v}` : ''; });

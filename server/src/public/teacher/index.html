@@ -136,12 +136,14 @@
         <button id="btn-stop-exam" class="danger hidden">시험 종료</button>
         <span class="sep"></span>
         <button id="btn-ai-grade" class="ai hidden">🤖 AI 채점 실행 (서술형)</button>
+        <button id="btn-ai-consistency" class="hidden" title="이미 채점된 답안 몇 개를 다시 채점해 점수가 얼마나 흔들리는지 확인합니다">일관성 검사</button>
         <button id="btn-ai-apply" class="hidden">AI 점수 전체 반영</button>
         <button id="btn-publish-results" class="hidden"></button>
         <a id="results-xlsx-link" href="#"><button>결과 엑셀 다운로드</button></a>
         <a id="results-csv-link" href="#"><button>CSV</button></a>
       </div>
       <div id="ai-progress" class="notice ai hidden"></div>
+      <div id="ai-usage" class="muted hidden" style="margin:4px 0 10px"></div>
       <table id="monitor-table">
         <thead><tr><th>번호</th><th>이름</th><th>접속</th><th>진행</th><th>이탈</th><th>제출</th><th>점수</th><th>AI 채점</th><th></th></tr></thead>
         <tbody></tbody>
@@ -155,9 +157,11 @@
     <div class="card" id="ai-settings-card">
       <p class="muted">
         서술형 문항만 AI가 채점 초안을 만듭니다. 객관식·단답형은 AI를 쓰지 않습니다.
-        API 키는 이 교사 PC에만 저장되며 학생 프로그램에는 전달되지 않습니다.
+        API 키는 세이브 파일이 아니라 <b>이 교사 PC의 프로필 폴더</b>에 저장되어 세이브를 복사·공유해도 함께 나가지 않고, 학생 프로그램에는 전달되지 않습니다.
         AI에는 문항·채점기준·모범답안·학생 답안만 보내고 <b>이름·번호 등 개인정보는 보내지 않습니다.</b>
+        교사가 직접 채점한 답안이 있으면 같은 문항의 다음 채점에 예시로 붙여 기준을 맞춥니다.
       </p>
+      <div id="ai-usage-total" class="muted" style="margin-bottom:8px"></div>
       <div class="form-grid">
         <label>API 키
           <div class="row">
@@ -218,7 +222,15 @@
         <span class="sep"></span>
         <button id="btn-ws-switch">다른 세이브 열기</button>
       </div>
-      <p class="muted">세이브 파일에는 학생 명단·과목·과제·시험·채점 결과·설정(AI 키 포함)이 들어 있습니다. 첨부 파일은 같은 위치의 <code>이름.files</code> 폴더에 저장되므로 백업할 때 함께 복사하세요.</p>
+      <p class="muted">세이브 파일에는 학생 명단·과목·과제·시험·채점 결과·설정이 들어 있습니다(AI 키는 제외). 첨부 파일은 같은 위치의 <code>이름.files</code> 폴더에 저장되므로 옮길 때 함께 복사하세요.</p>
+      <div class="row" style="margin-top:10px;flex-wrap:wrap">
+        <b>자동 백업</b>
+        <span id="backup-summary" class="muted"></span>
+        <span class="sep"></span>
+        <button id="btn-backup-now" class="small">지금 백업</button>
+      </div>
+      <div id="backup-list" class="muted" style="margin-top:6px;font-size:12px"></div>
+      <p class="muted" style="margin-top:8px">시험 시작·종료 때와 하루 한 번 자동으로 <code>이름.files\backups\</code>에 사본을 남깁니다(최근 20개). 세이브가 깨지면 시작 화면의 [복구]로 되돌릴 수 있습니다.</p>
     </div>
     <h2>서버 정보</h2>
     <div class="card"><pre id="tools-server-info"></pre></div>

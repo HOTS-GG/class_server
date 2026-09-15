@@ -109,7 +109,9 @@ async function openWorkspace(file) {
   const dataDir = legacy ? legacyDir() : dataDirFor(file);
   try {
     if (server) await stopServer();
-    server = await createClassServer({ dataDir, dbFile: file, httpPort });
+    // API 키는 세이브가 아니라 교사 PC 프로필(userData)에 저장 — 세이브를 복사해도 키가 따라가지 않는다
+    const secretsFile = path.join(app.getPath('userData'), 'secrets.json');
+    server = await createClassServer({ dataDir, dbFile: file, secretsFile, httpPort });
     server.events.on('workspace:switch', () => switchWorkspace());
     await server.start();
   } catch (err) {
@@ -162,6 +164,26 @@ ipcMain.handle('ws:choose-open', async () => {
   return r.canceled ? null : r.filePaths[0];
 });
 ipcMain.handle('ws:open', (e, file) => openWorkspace(file));
+
+// ── 백업 목록 / 복구 (시작 화면, 서버가 떠 있지 않을 때만) ─────────────────────────────
+ipcMain.handle('ws:backups', async (e, file) => {
+  const { listBackupsIn } = await import('../../server/src/db.js');
+  const dir = path.join(file === legacyFile() ? legacyDir() : dataDirFor(file), 'backups');
+  return listBackupsIn(dir).map((b) => ({ ...b, when: new Date(b.mtime).toLocaleString('ko-KR') }));
+});
+ipcMain.handle('ws:restore', async (e, file, backupPath) => {
+  try {
+    if (server) throw new Error('세이브가 열려 있는 동안에는 복구할 수 없습니다.');
+    const dir = path.join(file === legacyFile() ? legacyDir() : dataDirFor(file), 'backups');
+    if (path.dirname(path.resolve(backupPath)) !== path.resolve(dir)) throw new Error('이 세이브의 백업 폴더에 있는 파일만 복구할 수 있습니다.');
+    JSON.parse(fs.readFileSync(backupPath, 'utf8')); // 백업 자체가 온전한지 확인
+    if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.before-restore-${Date.now()}`);
+    fs.copyFileSync(backupPath, file);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 // ── 앱 수명주기 ─────────────────────────────
 app.whenReady().then(() => {

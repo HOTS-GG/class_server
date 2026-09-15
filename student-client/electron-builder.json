@@ -15,7 +15,14 @@
     "!**/node_modules/.cache/**"
   ],
   "win": {
-    "target": ["portable"]
+    "target": [
+      "portable"
+    ],
+    "signingHashAlgorithms": [
+      "sha256"
+    ],
+    "rfc3161TimeStampServer": "http://timestamp.digicert.com",
+    "verifyUpdateCodeSignature": false
   },
   "portable": {
     "artifactName": "ClassServer-학생용-${version}.exe"

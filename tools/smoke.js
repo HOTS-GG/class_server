@@ -37,7 +37,7 @@ const fakeOpenRouter = async (url, opts) => {
   return {
     ok: true, status: 200,
     text: async () => JSON.stringify({
-      model: 'fake/model',
+      model: 'anthropic/claude-haiku-4.5', // 모델 목록에 단가가 있는 모델 → 비용 추정 검증
       choices: [{ message: { content: JSON.stringify({
         score, criteria: [{ name: '근거', score, max: 10, reason: '가짜 채점' }],
         feedback: '가짜 피드백입니다.', summary: hasFile ? '첨부 요약' : '', confidence: 0.85,
@@ -271,6 +271,24 @@ const fallback = await post(`/api/student/exams/${exam.id}/answer`, {
 }, auth2.token);
 check('HTTP 폴백 답안 저장', fallback.ok === true);
 
+// 일괄 동기화: 서버보다 오래된 답은 건너뛰고, 새 답만 반영
+{
+  const q2second = v2.questions.filter((q) => q.type === 'mc')[1];
+  const sync = await post(`/api/student/exams/${exam.id}/sync`, { answers: {
+    [q2first.id]: { choiceId: q2first.choices[1].id, savedAt: fallback.savedAt - 5000 },   // 오래된 것 → 무시
+    [q2second.id]: { choiceId: q2second.choices[0].id, savedAt: Date.now() },              // 새 것 → 반영
+  } }, auth2.token);
+  check('답안 일괄 동기화 (오래된 답 무시, 새 답 반영)', sync.ok === true && sync.applied === 1 && sync.skipped === 1
+    && sync.answers[q2first.id].choiceId === q2first.choices[0].id);
+  const sock2 = io(`${base}/student`, { auth: { token: auth2.token } });
+  await new Promise((r) => sock2.on('connect', r));
+  const sockSync = await new Promise((r) => sock2.emit('exam:sync', { examId: exam.id, answers: {} }, r));
+  check('소켓 동기화 응답', sockSync?.ok === true && sockSync.applied === 0);
+  const sockSyncSubmitted = await new Promise((r) => sock.emit('exam:sync', { examId: exam.id, answers: {} }, r));
+  check('이미 제출한 학생의 동기화는 거부', sockSyncSubmitted?.ok === false);
+  sock2.disconnect();
+}
+
 // 교사 종료 → 미제출자 자동 제출
 await post(`/api/teacher/exams/${exam.id}/stop`);
 await sleep(300);
@@ -297,6 +315,17 @@ const aiSet1 = await fetch(`${base}/api/teacher/ai-settings`, {
 }).then((r) => r.json());
 check('AI 설정 저장 — 키는 힌트만 노출', aiSet1.configured === true && aiSet1.keyHint.includes('…')
   && !JSON.stringify(aiSet1).includes('sk-or-test'));
+await server.db.flushNow();
+check('키는 세이브 파일이 아닌 비밀값 파일에 저장', !fs.readFileSync(server.db.file, 'utf8').includes('sk-or-test')
+  && fs.readFileSync(server.db.secretsFile, 'utf8').includes('sk-or-test'));
+
+// ── 세이브 백업 ─────────────────────────────
+{
+  const b0 = await get('/api/teacher/backups');
+  check('열 때 일일 백업 + 시험 시작/종료 백업 존재', b0.backups.some((b) => b.reason === 'daily') && b0.backups.some((b) => b.reason === 'exam-start') && b0.backups.some((b) => b.reason === 'exam-end'));
+  const b1 = await post('/api/teacher/backups');
+  check('수동 백업 생성', b1.ok === true && fs.existsSync(b1.path) && b1.backups[0].reason === 'manual');
+}
 
 // ── AI 채점 (서술형만) ─────────────────────────────
 const monBefore = await get(`/api/teacher/exams/${exam.id}/monitor`);
@@ -325,6 +354,14 @@ check('AI 초안은 최종 점수에 미반영 (여전히 30점)', att1.attempt.
 const mon3 = await get(`/api/teacher/exams/${exam.id}/monitor`);
 check('감독 화면 AI 상태(2/2 완료, 미반영)', mon3.rows.find((r) => r.studentId === students[0].id)?.ai?.done === 2
   && mon3.rows.find((r) => r.studentId === students[0].id)?.ai?.applied === 0);
+check('AI 비용 추정 (모델 단가 × 토큰) 및 시험별 사용량', typeof att1.attempt.aiGrades[essayText.id]?.costUsd === 'number'
+  && att1.attempt.aiGrades[essayText.id].costUsd > 0 && mon3.exam.aiUsage?.calls >= 2 && mon3.exam.aiUsage.costKnown === true);
+const cons = await post(`/api/teacher/exams/${exam.id}/ai-consistency`, { sample: 2 });
+// 텍스트 답안이 있는 AI 채점은 학생1의 서술형 1개뿐 → 표본 1개
+check('일관성 검사 (표본 재채점, 판정 반환)', cons.ok === true && cons.sampled === 1 && cons.verdict === 'ok'
+  && cons.items.every((it) => typeof it.regraded === 'number' && it.number === 1));
+const att1c = await get(`/api/teacher/exams/${exam.id}/attempts/${row1.attemptId}`);
+check('일관성 검사는 원래 채점을 바꾸지 않음', att1c.attempt.aiGrades[essayText.id]?.score === 8);
 
 // 교사가 한 문항은 직접 채점(6점) → 전체 반영 시 교사 점수 유지
 await post(`/api/teacher/exams/${exam.id}/attempts/${row1.attemptId}/grade`, {
@@ -406,6 +443,9 @@ check('과목 삭제 후 시험·학생 보존(과목 없음으로)', delSubj.ok
   && (await get('/api/teacher/exams')).some((e) => e.id === exam.id && e.subjectName === null)
   && (await get('/api/teacher/students')).filter((s) => !s.subjectId).length === 3);
 
+const answersLogCount = server.db.readEvents(`answers-${exam.id}`).length;
+const focusLogCount = server.db.readEvents(`focus-${exam.id}`).length;
+
 // ── 복제(재시험)와 삭제 ─────────────────────────────
 const dup = await post(`/api/teacher/exams/${exam.id}/duplicate`);
 check('시험 복제 → 재시험 초안', dup.status === 'draft' && dup.questions.length === exam.questions.length
@@ -414,11 +454,9 @@ const delDup = await fetch(`${base}/api/teacher/exams/${dup.id}`, { method: 'DEL
 check('초안 삭제', delDup.ok === true);
 const delEnded = await fetch(`${base}/api/teacher/exams/${exam.id}`, { method: 'DELETE' }).then((r) => r.json());
 const attemptsLeft = server.db.data.attempts.filter((a) => a.examId === exam.id).length;
-check('종료 시험 삭제(응시 기록·첨부 파일 포함)', delEnded.ok === true && attemptsLeft === 0 && !fs.existsSync(ansDir));
-
-// ── 이벤트 로그(JSONL) ─────────────────────────────
-check('답안 JSONL 기록', server.db.readEvents(`answers-${exam.id}`).length >= 8);
-check('이탈 JSONL 기록', server.db.readEvents(`focus-${exam.id}`).length >= 2);
+check('종료 시험 삭제(응시 기록·첨부 파일·이벤트 로그 포함)', delEnded.ok === true && attemptsLeft === 0 && !fs.existsSync(ansDir)
+  && server.db.readEvents(`answers-${exam.id}`).length === 0 && server.db.readEvents(`focus-${exam.id}`).length === 0);
+check('삭제 전 답안·이탈 JSONL은 기록되어 있었음', answersLogCount >= 8 && focusLogCount >= 2);
 
 sock.disconnect();
 await server.stop();

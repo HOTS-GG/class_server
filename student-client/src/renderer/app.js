@@ -166,6 +166,7 @@ async function renderConnModal() {
     rows.push(['시계 차이', `${Math.round(serverOffset / 1000)}초 (서버 기준으로 타이머 보정)`]);
   }
   rows.push(['마지막 답안 저장', lastSavedAt ? new Date(lastSavedAt).toLocaleTimeString('ko-KR', { hour12: false }) : '—']);
+  rows.push(['미저장 답안', pending.size ? `<span class="pill warn">${pending.size}개 재시도 중</span>` : '없음']);
   rows.push(['시험 잠금', examLocked ? '잠금 중 (전체화면)' : '없음']);
   $('#conn-table').innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
 }
@@ -196,8 +197,9 @@ function connectSocket() {
     $('#conn-status').textContent = '연결됨';
     $('#conn-status').classList.remove('off');
     $('#conn-status').classList.add('on');
-    // 재접속 시 진행 중 시험 복구 / 끊긴 사이에 끝난 시험 정리
+    // 재접속 시 진행 중 시험 복구 / 끊긴 사이에 끝난 시험 정리, 밀린 답안 재전송
     await checkActiveExam();
+    flushPending();
   });
 
   socket.on('disconnect', () => {
@@ -581,26 +583,109 @@ $('#exam-progress').addEventListener('click', (e) => {
   if (btn?.dataset.goto) $(`#qbox-${btn.dataset.goto}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 
+// ── 답안 저장: 실패해도 잃지 않는다 ─────────────────────────────
+// 저장 요청이 실패하면 pending에 남겨 두고 2초→4초→…최대 15초 간격으로 재시도한다.
+// 소켓이 다시 붙으면 즉시 밀린 답안을 한꺼번에 보낸다. 제출 직전에는 전체 답안을 한 번 더 동기화한다.
+const pending = new Map();   // questionId → { answer, savedAt }
+let retryTimer = null;
+let retryDelay = 2000;
+
+function setSaveStatus() {
+  const el = $('#save-status');
+  if (pending.size) {
+    el.textContent = `⚠ 미저장 ${pending.size}개 — 재시도 중`;
+    el.classList.add('unsaved');
+  } else {
+    el.classList.remove('unsaved');
+    el.textContent = lastSavedAt ? `저장됨 ${new Date(lastSavedAt).toLocaleTimeString('ko-KR', { hour12: false })}` : '';
+  }
+}
+
+function markSaved(questionId, localSavedAt, serverSavedAt) {
+  const p = pending.get(questionId);
+  if (p && p.savedAt === localSavedAt) pending.delete(questionId); // 그 사이 더 새 답이 들어왔으면 그것은 남긴다
+  lastSavedAt = serverSavedAt ?? Date.now();
+  if (!pending.size) retryDelay = 2000;
+  setSaveStatus();
+}
+
+// 한 답안을 서버로 보낸다. 서버가 "거부"(시험 종료·잘못된 선택지 등)하면 재시도하지 않는다.
+function sendAnswer(questionId, answer, localSavedAt) {
+  const examId = examData.exam.id;
+  const reject = (msg) => { pending.delete(questionId); $('#save-status').textContent = `⚠ ${msg}`; };
+  if (socket?.connected) {
+    socket.emit('exam:answer', { examId, questionId, answer }, (res) => {
+      if (res?.ok) markSaved(questionId, localSavedAt, res.savedAt);
+      else if (res) reject(res.error);
+      else scheduleRetry();
+    });
+    return;
+  }
+  api('POST', `/api/student/exams/${examId}/answer`, { questionId, answer })
+    .then((r) => markSaved(questionId, localSavedAt, r.savedAt))
+    .catch((err) => {
+      if (/종료|제출한|대상이 아닙|존재하지|잘못된 선택지/.test(err.message)) reject(err.message);
+      else scheduleRetry();
+    });
+}
+
+function scheduleRetry() {
+  setSaveStatus();
+  if (retryTimer || !pending.size) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    retryDelay = Math.min(retryDelay * 2, 15000);
+    flushPending();
+  }, retryDelay);
+}
+
+// 밀린 답안 전부 재전송 (재접속 직후, 재시도 타이머)
+function flushPending() {
+  if (!examData || !pending.size) return;
+  if (socket?.connected) {
+    const answers = {};
+    for (const [qid, p] of pending) answers[qid] = { ...p.answer, savedAt: p.savedAt };
+    const sentAt = new Map([...pending].map(([qid, p]) => [qid, p.savedAt]));
+    socket.emit('exam:sync', { examId: examData.exam.id, answers }, (res) => {
+      if (res?.ok) { for (const [qid, at] of sentAt) markSaved(qid, at, Date.now()); setSaveStatus(); }
+      else if (res && /종료|제출한|대상이 아닙/.test(res.error ?? '')) { pending.clear(); $('#save-status').textContent = `⚠ ${res.error}`; }
+      else scheduleRetry();
+    });
+    return;
+  }
+  for (const [qid, p] of pending) sendAnswer(qid, p.answer, p.savedAt);
+  scheduleRetry();
+}
+
+// 제출 직전: 현재 화면의 모든 답안을 서버와 맞춘다. 성공하면 true.
+async function syncAllAnswers() {
+  if (!examData) return true;
+  const answers = {};
+  for (const [qid, a] of Object.entries(examData.answers)) {
+    if (a.choiceId != null || (a.text ?? '') !== '') answers[qid] = { choiceId: a.choiceId, text: a.text, savedAt: a.savedAt };
+  }
+  try {
+    const r = socket?.connected
+      ? await new Promise((resolve, reject) => socket.emit('exam:sync', { examId: examData.exam.id, answers }, (res) => (res?.ok ? resolve(res) : reject(new Error(res?.error ?? '동기화 실패')))))
+      : await api('POST', `/api/student/exams/${examData.exam.id}/sync`, { answers });
+    pending.clear();
+    lastSavedAt = Date.now();
+    setSaveStatus();
+    return !r.errors?.length;
+  } catch (err) {
+    $('#save-status').textContent = `⚠ 동기화 실패: ${err.message}`;
+    return false;
+  }
+}
+
 function saveAnswer(questionId, answer) {
   const prev = examData.answers[questionId];
-  examData.answers[questionId] = { ...answer, savedAt: Date.now(), ...(prev?.file ? { file: prev.file } : {}) };
+  const savedAt = Date.now();
+  examData.answers[questionId] = { ...answer, savedAt, ...(prev?.file ? { file: prev.file } : {}) };
   renderProgressNav();
-  const payload = { examId: examData.exam.id, questionId, answer };
-  const onSaved = (savedAt) => {
-    lastSavedAt = savedAt;
-    $('#save-status').textContent = `저장됨 ${new Date(savedAt).toLocaleTimeString('ko-KR', { hour12: false })}`;
-  };
-  if (socket?.connected) {
-    socket.emit('exam:answer', payload, (res) => {
-      if (res?.ok) onSaved(res.savedAt);
-      else if (res) $('#save-status').textContent = `⚠ ${res.error}`;
-    });
-  } else {
-    // 소켓 끊김 시 HTTP 폴백
-    api('POST', `/api/student/exams/${examData.exam.id}/answer`, { questionId, answer })
-      .then((r) => onSaved(r.savedAt))
-      .catch((err) => { $('#save-status').textContent = `⚠ 저장 실패: ${err.message}`; });
-  }
+  pending.set(questionId, { answer, savedAt });
+  setSaveStatus();
+  sendAnswer(questionId, answer, savedAt);
 }
 
 function startTimer() {
@@ -624,6 +709,14 @@ async function submitExam() {
   const warn = answered < total ? `\n(아직 안 푼 문제가 ${total - answered}개 있습니다!)` : '';
   if (!await csDialog.confirm(`시험을 제출할까요? 제출 후에는 수정할 수 없습니다.${warn}`, { title: '시험 제출', okText: '제출' })) return;
 
+  // 제출 전에 모든 답안을 서버와 한 번 더 맞춘다. 실패하면 학생이 선택.
+  $('#save-status').textContent = '답안 확인 중…';
+  const synced = await syncAllAnswers();
+  if (!synced) {
+    const go = await csDialog.confirm('일부 답안을 서버에 저장하지 못했습니다.\n선생님께 알리고 잠시 후 다시 시도하는 것을 권합니다.\n그래도 지금 제출할까요? (저장되지 않은 답은 빠질 수 있습니다)', { title: '저장 확인', danger: true, okText: '그래도 제출', cancelText: '다시 시도' });
+    if (!go) { flushPending(); return; }
+  }
+
   const instant = examData.exam.instantResults === true;
   const done = () => endExamScreen('제출 완료',
     instant ? '답안이 제출되었습니다. 시험이 끝나면 홈 화면의 [시험 결과]에서 점수를 바로 볼 수 있어요.'
@@ -645,6 +738,7 @@ $('#btn-submit-exam2').addEventListener('click', submitExam);
 
 async function endExamScreen(title, msg) {
   clearInterval(timerHandle);
+  clearTimeout(retryTimer); retryTimer = null; pending.clear();
   examLocked = false;
   await window.classClient.unlock();
   $('#done-title').textContent = title;

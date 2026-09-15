@@ -54,6 +54,7 @@ export function createExamService(db, io) {
     }
     db.scheduleFlush();
     scheduleEnd(exam);
+    db.backup('exam-start').catch((err) => console.error('[db] 시험 시작 백업 실패:', err.message));
     studentNs().emit('exam:started', { examId: exam.id, title: exam.title, endsAt: exam.endsAt, serverNow: Date.now() });
     teacherNs().emit('exam:status', { examId: exam.id, status: 'active', endsAt: exam.endsAt });
   }
@@ -74,6 +75,7 @@ export function createExamService(db, io) {
     exam.status = 'ended';
     exam.endedAt = Date.now();
     db.scheduleFlush();
+    db.backup('exam-end').catch((err) => console.error('[db] 시험 종료 백업 실패:', err.message));
     studentNs().emit('exam:ended', { examId: exam.id, reason });
     teacherNs().emit('exam:status', { examId: exam.id, status: 'ended', reason });
     // "즉시 공개" 시험: 종료와 동시에 자동 채점분(객관식·단답형)을 학생에게 공개.
@@ -119,6 +121,26 @@ export function createExamService(db, io) {
       questionCount: exam.questions.length,
     });
     return { savedAt };
+  }
+
+  // 여러 답안을 한 번에 동기화. 클라이언트가 보낸 savedAt이 서버 것보다 최신인 답안만 반영한다.
+  // (재접속 후 밀린 답안 재전송, 제출 직전 전체 확인용)
+  function syncAnswers(exam, student, answers) {
+    assertAcceptingAnswers(exam);
+    const attempt = attemptOf(exam.id, student.id);
+    if (!attempt) throw new Error('이 시험의 응시 대상이 아닙니다.');
+    if (attempt.submittedAt) throw new Error('이미 제출한 시험입니다.');
+    let applied = 0; let skipped = 0; const errors = [];
+    for (const [qid, a] of Object.entries(answers ?? {})) {
+      const existing = attempt.answers[qid];
+      const incomingAt = Number(a?.savedAt ?? 0);
+      if (existing && incomingAt && (existing.savedAt ?? 0) >= incomingAt) { skipped += 1; continue; }
+      try {
+        saveAnswer(exam, student, qid, { choiceId: a?.choiceId, text: a?.text });
+        applied += 1;
+      } catch (err) { errors.push(`${qid}: ${err.message}`); }
+    }
+    return { applied, skipped, errors, answers: attempt.answers };
   }
 
   // 서술형 첨부 파일 저장/삭제 (파일 자체는 라우트가 디스크에 놓고, 여기서는 답안 메타만 관리)
@@ -311,7 +333,7 @@ export function createExamService(db, io) {
   }
 
   return {
-    findExam, attemptOf, startExam, endExam, saveAnswer, saveAnswerFile, submit, regrade,
+    findExam, attemptOf, startExam, endExam, saveAnswer, syncAnswers, saveAnswerFile, submit, regrade,
     buildStudentPayload, activeExamFor, countAnswered, hasAnswer, restore, stopAllTimers,
     setResultsPublished, buildResultPayload,
   };

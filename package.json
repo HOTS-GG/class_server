@@ -1,6 +1,6 @@
 {
   "name": "class-server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "교실 평가 시스템 — 교사 호스트 + 학생 클라이언트 (과제 배부/회수, CBT, AI 서술형 채점, 붙여넣기 차단)",
   "type": "module",
@@ -18,7 +18,9 @@
     "student": "node tools/launch-electron.js student-client/src/main.js --dev",
     "simulate": "node tools/simulate.js",
     "build:teacher": "electron-builder --config teacher-app/electron-builder.json",
-    "build:student": "electron-builder --config student-client/electron-builder.json"
+    "build:student": "electron-builder --config student-client/electron-builder.json",
+    "build:signed": "powershell -ExecutionPolicy Bypass -File tools/build-signed.ps1",
+    "make-cert": "powershell -ExecutionPolicy Bypass -File tools/make-signing-cert.ps1"
   },
   "dependencies": {
     "archiver": "^7.0.1",

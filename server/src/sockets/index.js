@@ -59,6 +59,16 @@ export function attachSockets({ io, db, auth, presence, examService }) {
       }
     });
 
+    socket.on('exam:sync', (payload, cb) => {
+      try {
+        const exam = examService.findExam(payload?.examId);
+        const r = examService.syncAnswers(exam, student, payload?.answers ?? {});
+        cb?.({ ok: true, ...r });
+      } catch (err) {
+        cb?.({ ok: false, error: err.message });
+      }
+    });
+
     socket.on('exam:submit', (payload, cb) => {
       try {
         const exam = examService.findExam(payload?.examId);

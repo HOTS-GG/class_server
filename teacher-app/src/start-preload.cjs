@@ -8,5 +8,7 @@ contextBridge.exposeInMainWorld('startApi', {
   open: (file) => ipcRenderer.invoke('ws:open', file),
   forget: (file) => ipcRenderer.invoke('ws:forget', file),
   version: () => ipcRenderer.invoke('ws:version'),
+  backups: (file) => ipcRenderer.invoke('ws:backups', file),
+  restore: (file, backupPath) => ipcRenderer.invoke('ws:restore', file, backupPath),
   onStatus: (cb) => ipcRenderer.on('ws:status', (e, payload) => cb(payload)),
 });

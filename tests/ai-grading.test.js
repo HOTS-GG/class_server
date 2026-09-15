@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   buildUserMessage, parseGradeResponse, requestGrade, createAiGrader, OPENROUTER_URL,
+  pickTeacherExamples, estimateCost,
 } from '../server/src/services/aiGradingService.js';
 
 const Q = {
@@ -28,6 +29,34 @@ test('채점기준이 없으면 안내 문구로 대체된다', () => {
   const msg = buildUserMessage({ ...Q, rubric: '', modelAnswer: '' }, { text: 'x' });
   assert.ok(msg.includes('채점기준 없음'));
   assert.ok(msg.includes('모범답안 없음'));
+});
+
+test('교사 채점 예시(few-shot)가 있으면 프롬프트에 점수와 함께 들어간다', () => {
+  const msg = buildUserMessage(Q, { text: '답' }, [{ text: '예시 답안 A', score: 7, feedback: '좋아요' }, { text: '예시 답안 B', score: 2, feedback: '' }]);
+  assert.ok(msg.includes('[교사 채점 예시]'));
+  assert.ok(msg.includes('교사 점수 7/10점'));
+  assert.ok(msg.includes('교사 피드백: 좋아요'));
+  assert.ok(msg.includes('예시 답안 B'));
+  assert.ok(!buildUserMessage(Q, { text: '답' }).includes('[교사 채점 예시]'));
+});
+
+test('pickTeacherExamples: 같은 문항·텍스트 답안·교사 점수 있는 것만, 본인 제외, 최고·최저·중간 3개', () => {
+  const exam = { id: 'ex', questions: [Q] };
+  const mk = (id, score, text = '답', extra = {}) => ({ id, examId: 'ex', submittedAt: 1, answers: { q1: { text, ...extra } }, manualGrades: score == null ? {} : { q1: score }, feedback: {} });
+  const db = { data: { attempts: [
+    mk('a1', 10), mk('a2', 2), mk('a3', 5), mk('a4', 8), mk('a5', null),
+    mk('a6', 9, '', { file: { name: 'x.pdf' } }), mk('a7', 1, ''), { ...mk('a8', 3), examId: 'other' },
+  ] } };
+  const ex = pickTeacherExamples(db, exam, Q, { id: 'a1' });
+  assert.equal(ex.length, 3);
+  assert.deepEqual(ex.map((e) => e.score).sort((a, b) => a - b), [2, 5, 8]);
+  assert.equal(pickTeacherExamples(db, exam, Q, { id: 'a3' }).length, 3);
+  assert.equal(pickTeacherExamples({ data: { attempts: [] } }, exam, Q, { id: 'x' }).length, 0);
+});
+
+test('estimateCost: 토큰 × $/1M', () => {
+  assert.equal(estimateCost(1000, 500, { prompt: 1, completion: 5 }), 0.0035);
+  assert.equal(estimateCost(1000, 500, null), null);
 });
 
 test('빈 답안은 명시적으로 표시된다', () => {
@@ -282,6 +311,38 @@ test('applyAiGrades: 교사 점수는 유지(overwrite=false), 피드백 복사,
   const n2 = grader.applyAiGrades(exam, attempts[1], { overwrite: true });
   assert.equal(n2, 2);
   assert.equal(attempts[1].manualGrades.q1, 8);
+});
+
+test('gradeAttempt: 교사 채점 예시가 프롬프트에 붙고 비용이 계산된다', async () => {
+  const bodies = [];
+  const fetchImpl = async (url, opts) => { bodies.push(JSON.parse(opts.body)); return okResponse(completion({ score: 6, criteria: [], feedback: '', summary: '', confidence: 0.8 })); };
+  const env = fakeEnv({ fetchImpl });
+  env.attempts[1].manualGrades = { q1: 3 }; // a2는 교사가 q1을 직접 채점함 → a1 채점 시 예시로 쓰임
+  const priced = createAiGrader({ db: env.db, io: { of: () => ({ emit() {}, to: () => ({ emit() {} }) }) }, examService: { regrade() { return {}; } }, fetchImpl, priceLookup: async () => ({ prompt: 1, completion: 5 }) });
+  const r = await priced.gradeAttempt(env.exam, env.attempts[0], { questionIds: ['q1'] });
+  assert.equal(r.q1.exampleCount, 1);
+  assert.ok(bodies[0].messages[1].content[0].text.includes('교사 점수 3/10점'));
+  assert.equal(r.q1.costUsd, estimateCost(100, 50, { prompt: 1, completion: 5 }));
+  const u = priced.usageOf(env.exam);
+  assert.equal(u.calls, 1);
+  assert.equal(u.promptTokens, 100);
+  assert.ok(u.costKnown && u.costUsd > 0);
+});
+
+test('checkConsistency: 표본을 재채점해 편차를 보고한다 (저장하지 않음)', async () => {
+  let call = 0;
+  const fetchImpl = async () => { call += 1; return okResponse(completion({ score: call <= 2 ? 6 : 1, criteria: [], feedback: '', summary: '', confidence: 0.8 })); };
+  const { exam, attempts, grader } = fakeEnv({ fetchImpl });
+  // a1.q1, a2.q1, a2.q2 는 텍스트 답안 → 첫 배치(3회 중 텍스트 2회 + a1.q2는 빈 답안 스킵) …
+  await grader.gradeAttempt(exam, attempts[0]); // q1 → 6, q2 빈 답안
+  await grader.gradeAttempt(exam, attempts[1]); // q1 → 6, q2 → 1
+  const before = JSON.stringify(attempts.map((a) => a.aiGrades));
+  const r = await grader.checkConsistency(exam, { sample: 3 });
+  assert.equal(r.sampled, 3);
+  assert.ok(['ok', 'warn'].includes(r.verdict));
+  assert.ok(r.items.every((it) => typeof it.original === 'number' && (it.error || typeof it.regraded === 'number')));
+  assert.equal(JSON.stringify(attempts.map((a) => a.aiGrades)), before, '원래 채점은 바뀌지 않아야 함');
+  await assert.rejects(grader.checkConsistency({ ...exam, id: 'nothing' }), /먼저 AI 채점/);
 });
 
 test('applyAllAiGrades + summarize', async () => {

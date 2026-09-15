@@ -70,4 +70,27 @@ npm run build:student
 > `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0` 폴더로 직접 압축 해제(심링크 오류 무시)한 뒤
 > `darwin\10.12\lib\libcrypto.1.0.0.dylib`를 `libcrypto.dylib`로, `libssl.1.0.0.dylib`를 `libssl.dylib`로 복사.
 
+### 코드 서명
+
+서명 없는 exe는 Windows SmartScreen이 "알 수 없는 게시자"로 경고합니다. 서명을 붙이려면:
+
+```bash
+npm run make-cert
+```
+
+```bash
+npm run build:signed
+```
+
+- `make-cert`(tools/make-signing-cert.ps1)는 **자체 서명 인증서**를 `%USERPROFILE%\.class_server\codesign.pfx`(기본 비밀번호 `classserver`)로 만듭니다. 자체 서명은 서명 자체는 붙지만 SmartScreen 경고는 그대로이고, 인증서를 신뢰하는 PC에서만 "확인된 게시자"로 보입니다. 학교 PC에 배포할 때는 `.cer`(공개키)를 각 PC의 "신뢰할 수 있는 게시자"에 넣거나 도메인 정책으로 배포하세요.
+- 경고를 완전히 없애려면 공인 CA의 코드 서명 인증서(OV/EV)를 구해 같은 스크립트에 `-Cert 경로.pfx -Password …` 로 넘기면 됩니다(EV는 즉시, OV는 평판이 쌓인 뒤 SmartScreen 경고가 사라집니다).
+- `build:signed`는 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` 로 electron-builder에 인증서를 넘기고(SHA-256, DigiCert 타임스탬프), 빌드 뒤 `Get-AuthenticodeSignature` 결과를 출력합니다.
+
+## 데이터와 보안
+
+- 세이브 파일 `이름.classdb` + `이름.files/`(첨부·이벤트 로그·백업). API 키는 세이브가 아니라 `secrets.json`(Electron: `%APPDATA%\class-server-teacher\`, 서버 단독 실행: 데이터 폴더)에 저장.
+- 백업: 시험 시작·종료·하루 1회·수동 → `이름.files/backups/`(20개 보관). 손상 시 자동 복구, 시작 화면에서 수동 복구.
+- 학생 답안 전송은 미저장 큐 + 재시도 + 제출 전 동기화(`exam:sync`, 서버는 `savedAt`이 더 최신인 답안만 반영).
+- AI 채점: 교사 확정 점수를 few-shot 예시로 활용, 일관성 검사(표본 재채점), 호출·토큰·비용 집계.
+
 자세한 사용법은 [docs/teacher-guide.md](docs/teacher-guide.md), 네트워크 문제는 [docs/network-setup.md](docs/network-setup.md) 참고.

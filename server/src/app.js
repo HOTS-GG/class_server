@@ -38,18 +38,20 @@ export function lanAddresses() {
 export async function createClassServer({
   dataDir,
   dbFile = null,   // 세이브 파일 경로 (없으면 dataDir/db.json)
+  secretsFile = null, // API 키 저장 파일 (없으면 dataDir/secrets.json). Electron은 userData에 둔다.
   httpPort = DEFAULT_HTTP_PORT,
   udpPort = DEFAULT_UDP_PORT,
   enableDiscovery = true,
   aiFetch = fetch, // 테스트에서 OpenRouter 호출을 가짜로 바꿀 때 사용
 } = {}) {
   if (!dataDir) throw new Error('dataDir가 필요합니다.');
-  const db = await openDb(dataDir, { dbFile });
+  const db = await openDb(dataDir, { dbFile, secretsFile });
   const events = new EventEmitter(); // 호스트(Electron)에 알리는 이벤트: 'workspace:switch'
   const workspace = {
     file: db.file,
     dataDir,
     name: path.basename(db.file).replace(/\.(classdb|json)$/i, ''),
+    recoveredFrom: db.recoveredFrom,
   };
 
   const app = express();
@@ -63,7 +65,22 @@ export async function createClassServer({
   const presence = createPresence();
   const examService = createExamService(db, io);
   examService.restore();
-  const aiGrader = createAiGrader({ db, io, examService, fetchImpl: aiFetch });
+  // 모델 가격 조회 (비용 표시용). 목록 캐시가 비어 있으면 한 번 받아오고, 실패해도 채점은 진행한다.
+  let modelCache = { at: 0, list: [] };
+  const ensureModels = async (force = false) => {
+    if (!force && modelCache.list.length && Date.now() - modelCache.at < 60 * 60 * 1000) return modelCache.list;
+    const list = await fetchModelList(aiFetch, db.getApiKey());
+    modelCache = { at: Date.now(), list };
+    return list;
+  };
+  const priceLookup = async (modelId) => {
+    try {
+      const list = await ensureModels(false);
+      const m = list.find((x) => x.id === modelId);
+      return m && m.promptPrice != null ? { prompt: m.promptPrice, completion: m.completionPrice ?? 0 } : null;
+    } catch { return null; }
+  };
+  const aiGrader = createAiGrader({ db, io, examService, fetchImpl: aiFetch, priceLookup });
   attachSockets({ io, db, auth, presence, examService });
 
   // CORS: 학생 Electron 렌더러(file://)와 향후 모바일 웹에서의 호출 허용
@@ -155,17 +172,20 @@ export async function createClassServer({
 
   // ── AI 채점 설정 (OpenRouter) ─────────────────────────────
   // 키 값은 절대 그대로 돌려주지 않는다 (앞 8자/뒤 4자만).
+  // 키는 세이브 파일이 아니라 비밀값 파일(db.secretsFile)에 저장된다. 화면에는 앞 8자/뒤 4자만.
   const aiSettingsView = () => {
     const ai = db.data.settings.ai ?? {};
-    const key = String(ai.apiKey ?? '');
+    const key = db.getApiKey();
     return {
       configured: key.length > 0,
       keyHint: key ? `${key.slice(0, 8)}…${key.slice(-4)}` : '',
       keyLength: key.length,
+      keyStoredAt: db.secretsFile,
       model: ai.model || DEFAULT_AI_MODEL,
       pdfEngine: ai.pdfEngine || DEFAULT_PDF_ENGINE,
       presets: AI_MODEL_PRESETS,
       defaultModel: DEFAULT_AI_MODEL,
+      usage: aiGrader.usageTotal(),
     };
   };
 
@@ -177,10 +197,8 @@ export async function createClassServer({
     const { apiKey, model, pdfEngine, clearKey } = req.body ?? {};
     db.data.settings.ai ??= {};
     const ai = db.data.settings.ai;
-    if (clearKey === true) ai.apiKey = '';
-    else if (typeof apiKey === 'string' && apiKey.trim()) {
-      ai.apiKey = apiKey.replace(/\s+/g, '');
-    }
+    if (clearKey === true) db.setApiKey('');
+    else if (typeof apiKey === 'string' && apiKey.trim()) db.setApiKey(apiKey);
     if (model !== undefined) ai.model = String(model ?? '').trim();
     if (pdfEngine !== undefined) ai.pdfEngine = pdfEngine === 'mistral-ocr' ? 'mistral-ocr' : 'pdf-text';
     db.scheduleFlush();
@@ -188,24 +206,33 @@ export async function createClassServer({
   });
 
   // OpenRouter 모델 목록 동기화 (최신 모델을 고를 수 있도록). 1시간 메모리 캐시.
-  let modelCache = { at: 0, list: [] };
   app.get('/api/teacher/ai-settings/models', auth.teacherMiddleware, async (req, res) => {
     const force = req.query.refresh === '1';
-    if (!force && modelCache.list.length && Date.now() - modelCache.at < 60 * 60 * 1000) {
-      return res.json({ ok: true, cached: true, fetchedAt: modelCache.at, models: modelCache.list });
-    }
+    const cached = !force && modelCache.list.length && Date.now() - modelCache.at < 60 * 60 * 1000;
     try {
-      const list = await fetchModelList(aiFetch, String(db.data.settings.ai?.apiKey ?? ''));
-      modelCache = { at: Date.now(), list };
-      res.json({ ok: true, cached: false, fetchedAt: modelCache.at, models: list });
+      const list = await ensureModels(force);
+      res.json({ ok: true, cached: !!cached, fetchedAt: modelCache.at, models: list });
     } catch (err) {
       res.status(502).json({ error: `모델 목록을 가져오지 못했습니다: ${err.message}` });
     }
   });
 
+  // ── 세이브 백업 ─────────────────────────────
+  app.get('/api/teacher/backups', auth.teacherMiddleware, (req, res) => {
+    res.json({ backups: db.listBackups(), lastBackupAt: db.data.settings.lastBackupAt ?? null, dir: path.join(dataDir, 'backups') });
+  });
+  app.post('/api/teacher/backups', auth.teacherMiddleware, async (req, res) => {
+    try {
+      const dest = await db.backup('manual');
+      res.json({ ok: true, path: dest, backups: db.listBackups() });
+    } catch (err) {
+      res.status(500).json({ error: `백업 실패: ${err.message}` });
+    }
+  });
+
   // 저장된 키(또는 입력 중인 키)로 OpenRouter 연결 확인
   app.post('/api/teacher/ai-settings/test', auth.teacherMiddleware, async (req, res) => {
-    const candidate = String(req.body?.apiKey ?? '').replace(/\s+/g, '') || String(db.data.settings.ai?.apiKey ?? '');
+    const candidate = String(req.body?.apiKey ?? '').replace(/\s+/g, '') || db.getApiKey();
     if (!candidate) return res.status(400).json({ error: 'API 키를 먼저 입력하세요.' });
     try {
       const info = await verifyApiKey(candidate, aiFetch);

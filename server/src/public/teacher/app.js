@@ -69,7 +69,7 @@ $$('#tabs button[data-tab]').forEach((btn) => btn.addEventListener('click', () =
   if (btn.dataset.tab === 'students') loadStudents();
   if (btn.dataset.tab === 'assignments') loadAssignments();
   if (btn.dataset.tab === 'exams') loadExams();
-  if (btn.dataset.tab === 'tools') { loadServerInfo(); loadAiSettings(); }
+  if (btn.dataset.tab === 'tools') { loadServerInfo(); loadAiSettings(); loadBackups(); }
 }));
 
 // ── 서버 정보 ─────────────────────────────
@@ -174,6 +174,33 @@ $('#subject-list').addEventListener('click', async (e) => {
 
 // ── AI 채점 설정 ─────────────────────────────
 let aiSettings = null;
+const USD_KRW = 1400; // 표시용 가정 환율
+function fmtUsage(u) {
+  if (!u || !u.calls) return '없음';
+  const tokens = (u.promptTokens + u.completionTokens).toLocaleString('ko-KR');
+  const cost = u.costKnown ? `약 $${u.costUsd.toFixed(4)} (≈ ${Math.round(u.costUsd * USD_KRW).toLocaleString('ko-KR')}원, 환율 ${USD_KRW}원 가정)` : '비용 미상(모델 단가 없음)';
+  return `${u.calls}회 호출 · ${tokens} tokens · ${cost}`;
+}
+
+// ── 세이브 백업 ─────────────────────────────
+async function loadBackups() {
+  try {
+    const r = await api('GET', '/api/teacher/backups');
+    const last = r.lastBackupAt ? new Date(r.lastBackupAt).toLocaleString('ko-KR') : '없음';
+    $('#backup-summary').textContent = `마지막 백업: ${last} · 보관 ${r.backups.length}개`;
+    const reasonKo = { manual: '수동', daily: '일일', 'exam-start': '시험 시작', 'exam-end': '시험 종료' };
+    $('#backup-list').innerHTML = r.backups.slice(0, 6).map((b) =>
+      `${esc(b.name)} <span class="muted">(${reasonKo[b.reason] ?? b.reason}, ${Math.max(1, Math.round(b.size / 1024))}KB)</span>`).join('<br>')
+      + (r.backups.length > 6 ? `<br>… 외 ${r.backups.length - 6}개 — ${esc(r.dir)}` : '');
+  } catch (err) { $('#backup-summary').textContent = err.message; }
+}
+$('#btn-backup-now').addEventListener('click', async () => {
+  try {
+    await api('POST', '/api/teacher/backups');
+    toast('백업을 만들었습니다.');
+    await loadBackups();
+  } catch (err) { toast(err.message, 'warn'); }
+});
 let aiModels = [];   // OpenRouter 동기화 목록
 
 function fmtPrice(m) {
@@ -268,7 +295,8 @@ async function loadAiSettings() {
     $('#ai-key').value = '';
     $('#ai-key').placeholder = aiSettings.configured ? '저장된 키 유지 (바꾸려면 새 키 입력)' : 'sk-or-v1-...';
     $('#ai-key-hint').textContent = aiSettings.configured
-      ? `저장됨: ${aiSettings.keyHint} (${aiSettings.keyLength}자)` : '저장된 키 없음 — 서술형 AI 채점을 쓰려면 입력하세요.';
+      ? `저장됨: ${aiSettings.keyHint} (${aiSettings.keyLength}자) · 위치: ${aiSettings.keyStoredAt}` : '저장된 키 없음 — 서술형 AI 채점을 쓰려면 입력하세요.';
+    $('#ai-usage-total').textContent = aiSettings.usage?.calls ? `이 세이브의 누적 AI 사용량: ${fmtUsage(aiSettings.usage)}` : '';
     $('#ai-test-result').textContent = '';
     if (!aiModels.length) syncModels(false); // 최초 1회 자동 동기화 (실패해도 기본 목록 유지)
   } catch (err) { toast(err.message, 'warn'); }
@@ -885,6 +913,23 @@ $('#btn-ai-grade').addEventListener('click', async () => {
   } catch (err) { toast(err.message, 'warn'); }
 });
 
+$('#btn-ai-consistency').addEventListener('click', async () => {
+  if (!await csDialog.confirm('이미 AI 채점된 답안 중 3개를 무작위로 골라 다시 채점하고, 원래 점수와 비교합니다.\n결과는 저장되지 않으며 호출 3회 비용이 듭니다. 진행할까요?', { title: '일관성 검사', okText: '검사' })) return;
+  const btn = $('#btn-ai-consistency');
+  btn.disabled = true; btn.textContent = '검사 중…';
+  try {
+    const r = await api('POST', `/api/teacher/exams/${monitorExamId}/ai-consistency`, { sample: 3 });
+    const lines = r.items.map((it) => it.error
+      ? `${it.number}번 Q${it.questionNo}: 오류 — ${it.error}`
+      : `${it.number}번 Q${it.questionNo}: ${it.original}점 → 재채점 ${it.regraded}점 (차이 ${it.diff}점 / ${it.points}점)`);
+    const head = r.verdict === 'warn'
+      ? `⚠ 편차가 큽니다 (최대 ${Math.round(r.maxDiffRatio * 100)}%). 채점기준을 더 구체적으로 나누고 "검토" 표시 답안을 직접 확인하세요.`
+      : r.verdict === 'ok' ? `✅ 일관성 양호 (최대 편차 ${Math.round(r.maxDiffRatio * 100)}%, 평균 ${r.meanDiff}점).` : '검사에 실패했습니다.';
+    await csDialog.alert(`${head}\n\n${lines.join('\n')}`, { title: '일관성 검사 결과' });
+  } catch (err) { toast(err.message, 'warn'); }
+  btn.disabled = false; btn.textContent = '일관성 검사';
+});
+
 $('#btn-ai-apply').addEventListener('click', async () => {
   if (!await csDialog.confirm('AI가 매긴 서술형 점수와 피드백을 최종 점수로 반영할까요?\n\n- 교사가 이미 직접 입력한 점수는 그대로 유지됩니다.\n- 반영 후에도 [답안/채점]에서 학생별로 수정할 수 있습니다.', { title: 'AI 점수 전체 반영', okText: '반영' })) return;
   try {
@@ -942,6 +987,12 @@ async function refreshMonitor() {
   $('#btn-ai-grade').disabled = !!exam.aiProgress && !exam.aiProgress.finished;
   const anyAiDone = rows.some((r) => r.ai?.done);
   $('#btn-ai-apply').classList.toggle('hidden', !showAi || !anyAiDone);
+  $('#btn-ai-consistency').classList.toggle('hidden', !showAi || !anyAiDone);
+  const usageEl = $('#ai-usage');
+  if (exam.aiUsage?.calls) {
+    usageEl.classList.remove('hidden');
+    usageEl.textContent = `이 시험의 AI 사용량: ${fmtUsage(exam.aiUsage)}`;
+  } else usageEl.classList.add('hidden');
   if (exam.aiProgress) renderAiProgress(exam.aiProgress);
   else if (!lastAiProgress || lastAiProgress.examId !== exam.id) renderAiProgress(null);
 
@@ -995,7 +1046,7 @@ function aiPanel(q, ai) {
   return `<div class="ai-panel">
     <div class="ai-head">🤖 AI 채점 초안 <span class="ai-score">${ai.score} / ${ai.maxScore ?? q.points}점</span>
       <span class="${low ? 'conf-low' : 'muted'}">${conf}${low ? ' — 직접 확인 권장' : ''}</span>
-      <span class="muted">${esc(ai.model ?? '')}${ai.promptTokens ? ` · ${ai.promptTokens + (ai.completionTokens ?? 0)} tokens` : ''}</span>
+      <span class="muted">${esc(ai.model ?? '')}${ai.promptTokens ? ` · ${ai.promptTokens + (ai.completionTokens ?? 0)} tokens` : ''}${typeof ai.costUsd === 'number' && ai.costUsd > 0 ? ` · $${ai.costUsd.toFixed(4)}` : ''}${ai.exampleCount ? ` · 교사 예시 ${ai.exampleCount}개 참고` : ''}</span>
       <span class="sep"></span>
       <button class="small ai" data-apply-q="${q.id}" title="AI 점수와 피드백을 아래 입력칸에 채웁니다">이 점수 적용</button>
     </div>

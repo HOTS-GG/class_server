@@ -16,10 +16,22 @@
     "!**/node_modules/.cache/**"
   ],
   "win": {
-    "target": ["nsis"]
+    "target": [
+      "nsis"
+    ],
+    "signingHashAlgorithms": [
+      "sha256"
+    ],
+    "rfc3161TimeStampServer": "http://timestamp.digicert.com",
+    "verifyUpdateCodeSignature": false
   },
   "fileAssociations": [
-    { "ext": "classdb", "name": "교실 평가 세이브", "description": "교실 평가 시스템 세이브 파일", "role": "Editor" }
+    {
+      "ext": "classdb",
+      "name": "교실 평가 세이브",
+      "description": "교실 평가 시스템 세이브 파일",
+      "role": "Editor"
+    }
   ],
   "nsis": {
     "oneClick": true,
