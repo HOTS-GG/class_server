@@ -13,9 +13,11 @@
     "teacher-app/src/**/*",
     "server/**/*",
     "shared/**/*",
+    "assets/icons/*.ico",
     "!**/node_modules/.cache/**"
   ],
   "win": {
+    "icon": "assets/icons/teacher.ico",
     "target": [
       "nsis"
     ],

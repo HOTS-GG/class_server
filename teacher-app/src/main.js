@@ -10,6 +10,7 @@ enableUtf8Console();
 app.setName('교실 평가 시스템'); // 대화창·오류창 제목에 실행 파일 이름 대신 표시
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const APP_ICON = path.join(__dirname, '..', '..', 'assets', 'icons', 'teacher.ico'); // 창·작업표시줄 아이콘 (패키징 시 exe 아이콘은 electron-builder가 넣음)
 const SAVE_EXT = 'classdb';
 
 let server = null;
@@ -68,7 +69,7 @@ function recentForUi() {
 function showStartWindow() {
   if (startWin) { startWin.focus(); return; }
   startWin = new BrowserWindow({
-    width: 720, height: 720, useContentSize: true, title: '교실 평가 시스템 — 세이브 파일 선택',
+    width: 720, height: 720, useContentSize: true, title: '교실 평가 시스템 — 세이브 파일 선택', icon: APP_ICON,
     autoHideMenuBar: true, resizable: false, maximizable: false, fullscreenable: false, center: true, show: false,
     webPreferences: { preload: path.join(__dirname, 'start-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -83,7 +84,7 @@ function showStartWindow() {
 
 function showDashboard(httpPort) {
   win = new BrowserWindow({
-    width: 1280, height: 860, title: '교실 평가 시스템 — 교사', autoHideMenuBar: true,
+    width: 1280, height: 860, title: '교실 평가 시스템 — 교사', autoHideMenuBar: true, icon: APP_ICON,
   });
   win.loadURL(`http://127.0.0.1:${httpPort}/teacher/`);
   win.on('closed', async () => {

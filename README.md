@@ -70,6 +70,10 @@ npm run build:student
 > `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0` 폴더로 직접 압축 해제(심링크 오류 무시)한 뒤
 > `darwin\10.12\lib\libcrypto.1.0.0.dylib`를 `libcrypto.dylib`로, `libssl.1.0.0.dylib`를 `libssl.dylib`로 복사.
 
+### 앱 아이콘
+
+`assets/icons/teachericon.svg`, `studenticon.svg`(720px PNG 내장)가 원본입니다. 원본을 바꾼 뒤 `npm run make-icons` 를 실행하면 `teacher.ico`, `student.ico`(16~256px)와 `*-256.png`가 다시 만들어지고, electron-builder(`win.icon`)와 각 앱의 BrowserWindow가 이를 사용합니다.
+
 ### 코드 서명
 
 서명 없는 exe는 Windows SmartScreen이 "알 수 없는 게시자"로 경고합니다. 서명을 붙이려면:

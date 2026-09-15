@@ -12,6 +12,7 @@ enableUtf8Console();
 app.setName('수업 클라이언트'); // 대화창·오류창 제목에 실행 파일 이름 대신 표시
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const APP_ICON = path.join(__dirname, '..', '..', 'assets', 'icons', 'student.ico'); // 창·작업표시줄 아이콘
 
 const isDev = process.argv.includes('--dev');
 const userDataArg = process.argv.find((a) => a.startsWith('--user-data='));
@@ -114,6 +115,7 @@ function createWindow() {
     height: 720,
     title: '수업 클라이언트',
     autoHideMenuBar: true,
+    icon: APP_ICON,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

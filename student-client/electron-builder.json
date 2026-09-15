@@ -12,9 +12,11 @@
     "package.json",
     "student-client/src/**/*",
     "shared/**/*",
+    "assets/icons/*.ico",
     "!**/node_modules/.cache/**"
   ],
   "win": {
+    "icon": "assets/icons/student.ico",
     "target": [
       "portable"
     ],
