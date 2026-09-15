@@ -74,9 +74,7 @@ npm run build:student
 
 `assets/icons/teacher.svg`, `student.svg`(벡터)가 원본입니다. 원본을 바꾼 뒤 `npm run make-icons` 를 실행하면 Electron이 각 크기(16~256px)로 직접 렌더링해 `teacher.ico`, `student.ico`와 `*-256.png`를 다시 만듭니다(모서리 바깥은 투명). electron-builder(`win.icon`)와 각 앱의 BrowserWindow가 이 ico를 씁니다. `assets/icons/original/`은 처음 받은 PNG 내장 SVG(흰 배경)로, 참고용입니다.
 
-### 코드 서명
-
-서명 없는 exe는 Windows SmartScreen이 "알 수 없는 게시자"로 경고합니다. 서명을 붙이려면:
+### 코드 서명과 SmartScreen
 
 ```bash
 npm run make-cert
@@ -86,9 +84,24 @@ npm run make-cert
 npm run build:signed
 ```
 
-- `make-cert`(tools/make-signing-cert.ps1)는 **자체 서명 인증서**를 `%USERPROFILE%\.class_server\codesign.pfx`(기본 비밀번호 `classserver`)로 만듭니다. 자체 서명은 서명 자체는 붙지만 SmartScreen 경고는 그대로이고, 인증서를 신뢰하는 PC에서만 "확인된 게시자"로 보입니다. 학교 PC에 배포할 때는 `.cer`(공개키)를 각 PC의 "신뢰할 수 있는 게시자"에 넣거나 도메인 정책으로 배포하세요.
-- 경고를 완전히 없애려면 공인 CA의 코드 서명 인증서(OV/EV)를 구해 같은 스크립트에 `-Cert 경로.pfx -Password …` 로 넘기면 됩니다(EV는 즉시, OV는 평판이 쌓인 뒤 SmartScreen 경고가 사라집니다).
-- `build:signed`는 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` 로 electron-builder에 인증서를 넘기고(SHA-256, DigiCert 타임스탬프), 빌드 뒤 `Get-AuthenticodeSignature` 결과를 출력합니다.
+- `make-cert`(tools/make-signing-cert.ps1)는 **자체 서명 인증서**를 `%USERPROFILE%\.class_server\codesign.pfx`(기본 비밀번호 `classserver`)와 공개키 `codesign.cer`로 만듭니다. `build:signed`는 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` 로 electron-builder에 인증서를 넘기고(SHA-256, DigiCert 타임스탬프), 빌드 뒤 `release\teacher`·`release\student` 에 **인증서 설치 도구**(`ClassServer-codesign.cer`, `trust-cert.ps1`, `ClassServer-cert-install.bat`)를 함께 넣습니다.
+- 서명은 "이 파일이 빌드 이후 변조되지 않았다"를 보장합니다. 하지만 **SmartScreen의 "알 수 없는 게시자/PC 보호" 경고는 인증서 종류가 아니라 Microsoft가 관리하는 평판**으로 결정되므로, 자체 서명으로는 사라지지 않습니다. 이 경고는 **인터넷에서 내려받은 파일(Mark-of-the-Web)에만** 뜹니다.
+
+**교내 배포 절차 (자체 서명 그대로, 경고 없이)**
+
+1. `release\teacher`, `release\student` 폴더를 **USB나 학교 공유 폴더로 복사**합니다. 이렇게 복사한 파일에는 MOTW가 없어 SmartScreen 경고가 뜨지 않습니다. (웹·메신저로 받은 경우: 파일 우클릭 → 속성 → **차단 해제**, 또는 경고 창에서 [추가 정보] → [실행])
+2. 각 PC에서 `ClassServer-cert-install.bat` 를 한 번 실행(관리자 승인)합니다. 자체 서명 인증서가 "신뢰할 수 있는 루트 인증 기관"과 "신뢰할 수 있는 게시자"에 들어가, exe 속성의 디지털 서명이 **정상**으로, UAC 창이 **확인된 게시자: ClassServer Teacher Tools** 로 표시됩니다. 같은 폴더의 exe는 자동으로 차단 해제됩니다. 되돌리려면 `powershell -ExecutionPolicy Bypass -File trust-cert.ps1 -Remove`.
+3. 컴퓨터실이 도메인·관리 프로그램으로 묶여 있으면 관리자에게 `.cer` 를 그룹 정책(신뢰할 수 있는 게시자)으로 배포해 달라고 하면 1회로 끝납니다.
+
+**경고 자체를 없애려면 (공인 인증서)** — 신원 확인과 비용이 필요해 개발자 본인이 신청해야 합니다. 받은 `.pfx`(또는 클라우드 서명 도구)를 `build:signed`에 `-Cert 경로.pfx -Password …` 로 넘기면 나머지는 동일합니다.
+
+| 방법 | 비용(대략) | 비고 |
+|---|---|---|
+| Certum Open Source Code Signing | 연 3~5만 원 + 카드리더/클라우드 | 오픈소스 프로젝트·개인 대상. 국내 개인 개발자가 가장 많이 씀. OV라서 SmartScreen 평판은 배포 누적 후 사라짐 |
+| Sectigo / SSL.com / DigiCert OV | 연 20~40만 원 | 개인은 신분증·주소 확인. 평판 누적 필요 |
+| EV 코드 서명 | 연 40만 원 이상 | 사업자만. SmartScreen 경고 즉시 해제 |
+| Azure Trusted Signing | 월 약 1.4만 원 | 개인 검증은 현재 일부 국가만, 조직은 3년 이상 사업 이력 필요 |
+| SignPath Foundation | 무료 | 공개 저장소의 오픈소스 프로젝트만, CI 빌드 연동 필요 |
 
 ## 데이터와 보안
 

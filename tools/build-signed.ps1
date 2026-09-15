@@ -13,6 +13,19 @@ $env:WIN_CSC_KEY_PASSWORD = $Password
 Set-Location (Join-Path $PSScriptRoot "..")
 if ($Target -eq "teacher" -or $Target -eq "all") { npm run build:teacher; if ($LASTEXITCODE -ne 0) { throw "교사용 빌드 실패" } }
 if ($Target -eq "student" -or $Target -eq "all") { npm run build:student; if ($LASTEXITCODE -ne 0) { throw "학생용 빌드 실패" } }
+# 배포 폴더에 "인증서 신뢰 설치" 도구 복사 (학교 PC에서 ClassServer-cert-install.bat 실행 → 확인된 게시자)
+$cer = [System.IO.Path]::ChangeExtension((Resolve-Path $Cert).Path, ".cer")
+if (-not (Test-Path $cer)) {
+  # pfx에서 공개키만 추출
+  $x = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2((Resolve-Path $Cert).Path, $Password)
+  [System.IO.File]::WriteAllBytes($cer, $x.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+}
+foreach ($d in @("release\teacher", "release\student")) {
+  if (-not (Test-Path $d)) { continue }
+  Copy-Item $cer (Join-Path $d "ClassServer-codesign.cer") -Force
+  Copy-Item (Join-Path $PSScriptRoot "trust-cert.ps1") (Join-Path $d "trust-cert.ps1") -Force
+  Copy-Item (Join-Path $PSScriptRoot "cert-install.bat") (Join-Path $d "ClassServer-cert-install.bat") -Force
+}
 Write-Host ""
 Write-Host "서명 확인:"
 Get-ChildItem release\teacher\*.exe, release\student\*.exe -ErrorAction SilentlyContinue | ForEach-Object {

@@ -15,6 +15,9 @@ $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $Subject `
   -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(5) -FriendlyName "ClassServer code signing"
 $sec = ConvertTo-SecureString -String $Password -Force -AsPlainText
 Export-PfxCertificate -Cert $cert -FilePath $Out -Password $sec | Out-Null
+$cerOut = [System.IO.Path]::ChangeExtension($Out, ".cer")
+Export-Certificate -Cert $cert -FilePath $cerOut -Type CERT | Out-Null   # 공개키만: 학교 PC에 신뢰시킬 때 배포
 Write-Host "인증서 생성: $Out"
+Write-Host "공개키(.cer): $cerOut  ← 학교 PC 배포용 (tools\trust-cert.ps1 / release 폴더의 ClassServer-cert-install.bat)"
 Write-Host "지문(Thumbprint): $($cert.Thumbprint)"
 Write-Host "다음 명령으로 서명 빌드: powershell -ExecutionPolicy Bypass -File tools\build-signed.ps1 -Cert `"$Out`" -Password `"$Password`""
