@@ -226,6 +226,11 @@ function connectSocket() {
     if ($('#screen-home').classList.contains('active')) loadAssignments();
   });
 
+  socket.on('assignment:updated', (ev) => {
+    toast(`과제가 수정되었습니다: ${ev.title}`);
+    if ($('#screen-home').classList.contains('active')) loadAssignments();
+  });
+
   socket.on('exam:results-published', (ev) => {
     toast(`📊 "${ev.title}" 성적이 공개되었습니다. [시험] 탭에서 확인하세요.`);
     if ($('#screen-home').classList.contains('active')) { loadResults(); renderExamTab(); }

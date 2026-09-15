@@ -141,6 +141,23 @@ const asg = await post('/api/teacher/assignments', { title: '테스트 과제', 
 check('과제 생성 (과목 연결)', asg.status === 'draft' && asg.subjectId === subj.id);
 const asgList = await get('/api/teacher/assignments');
 check('과제 목록에 과목 이름', asgList[0]?.subjectName === '2-3 과학');
+// 과제 수정: 제목·설명 변경 + 배부 파일 추가 후 삭제
+{
+  const fdA = new FormData();
+  fdA.set('title', '수정된 과제'); fdA.set('description', '설명 추가'); fdA.set('allowResubmit', 'false');
+  fdA.append('files', new Blob(['hello'], { type: 'text/plain' }), 'notice.txt');
+  const edited = await fetch(`${base}/api/teacher/assignments/${asg.id}`, { method: 'PUT', body: fdA }).then((r) => r.json());
+  check('과제 수정 (제목·설명·재제출·파일 추가)', edited.title === '수정된 과제' && edited.description === '설명 추가'
+    && edited.allowResubmit === false && edited.files.length === 1 && edited.files[0].name === 'notice.txt');
+  const fdB = new FormData();
+  fdB.set('removeFileIds', JSON.stringify([edited.files[0].fileId]));
+  const edited2 = await fetch(`${base}/api/teacher/assignments/${asg.id}`, { method: 'PUT', body: fdB }).then((r) => r.json());
+  check('과제 수정 (배부 파일 삭제, 나머지 유지)', edited2.files.length === 0 && edited2.title === '수정된 과제');
+  const bad = await fetch(`${base}/api/teacher/assignments/${asg.id}`, { method: 'PUT', body: (() => { const x = new FormData(); x.set('title', '  '); return x; })() });
+  check('과제 수정: 빈 제목 거부', bad.status === 400);
+  const fdC = new FormData(); fdC.set('title', '테스트 과제'); fdC.set('allowResubmit', 'true');
+  await fetch(`${base}/api/teacher/assignments/${asg.id}`, { method: 'PUT', body: fdC });
+}
 await post(`/api/teacher/assignments/${asg.id}/publish`);
 
 const fd = new FormData();

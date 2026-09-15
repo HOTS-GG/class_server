@@ -520,9 +520,14 @@ setInterval(() => {
 }, 1000);
 
 // ── 과제 ─────────────────────────────
+let assignmentsCache = [];
+let editingAssignmentId = null;      // 수정 중인 과제 id (null이면 "과제 만들기")
+let editingRemoveFileIds = new Set(); // 수정 중 삭제 표시한 배부 파일
+
 async function loadAssignments() {
   await loadSubjects();
   const all = await api('GET', '/api/teacher/assignments');
+  assignmentsCache = all;
   const list = currentSubjectId ? all.filter((a) => a.subjectId === currentSubjectId) : all;
   const label = { draft: '초안', published: '배부됨', closed: '마감' };
   $('#assignment-list').innerHTML = list.length ? list.map((a) => `
@@ -534,6 +539,7 @@ async function loadAssignments() {
       ${a.status === 'draft' ? `<button class="small primary" data-act="publish" data-id="${a.id}">배부</button>` : ''}
       ${a.status === 'published' ? `<button class="small" data-act="close" data-id="${a.id}">마감</button>` : ''}
       <button class="small" data-act="detail" data-id="${a.id}" data-title="${esc(a.title)}">제출 현황</button>
+      <button class="small" data-act="edit" data-id="${a.id}">수정</button>
       <button class="small" data-act="del" data-id="${a.id}" data-title="${esc(a.title)}" data-count="${a.submittedCount}">삭제</button>
     </div>`).join('') : `<p class="muted">${currentSubjectId ? '이 과목에는 아직 과제가 없습니다.' : '아직 과제가 없습니다.'}</p>`;
 
@@ -550,6 +556,9 @@ async function loadAssignments() {
         await loadAssignments();
       } else if (btn.dataset.act === 'detail') {
         await openAssignmentDetail(btn.dataset.id, btn.dataset.title);
+      } else if (btn.dataset.act === 'edit') {
+        const a = assignmentsCache.find((x) => x.id === btn.dataset.id);
+        if (a) startEditAssignment(a);
       } else if (btn.dataset.act === 'del') {
         const n = Number(btn.dataset.count);
         const msg = `"${btn.dataset.title}" 과제를 삭제할까요?\n배부 파일과 학생 제출물${n ? ` (${n}명)` : ''}도 함께 삭제됩니다. 필요하면 zip을 먼저 내려받으세요.`;
@@ -583,17 +592,76 @@ async function openAssignmentDetail(id, title) {
 
 $('#btn-asg-back').addEventListener('click', () => $('#assignment-detail').classList.add('hidden'));
 
+// 과제 만들기 카드를 수정 폼으로 전환
+function startEditAssignment(a) {
+  editingAssignmentId = a.id;
+  editingRemoveFileIds = new Set();
+  $('#asg-form-title').textContent = '과제 수정';
+  $('#asg-title').value = a.title;
+  $('#asg-desc').value = a.description ?? '';
+  $('#asg-resubmit').checked = a.allowResubmit !== false;
+  $('#asg-files').value = '';
+  $('#btn-create-assignment').textContent = '수정 저장';
+  $('#btn-cancel-edit-assignment').classList.remove('hidden');
+  renderExistingAsgFiles(a.files ?? []);
+  $('#asg-form').classList.add('editing');
+  $('#asg-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#asg-title').focus();
+}
+
+function renderExistingAsgFiles(files) {
+  const box = $('#asg-existing-files');
+  if (!files.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.classList.remove('hidden');
+  box.innerHTML = '<span class="muted">배부 파일:</span> ' + files.map((f) => {
+    const removed = editingRemoveFileIds.has(f.fileId);
+    return `<span class="file-chip${removed ? ' removed' : ''}" data-file-id="${f.fileId}">${esc(f.name)} <button type="button" class="small" data-act="toggle-remove" title="${removed ? '삭제 취소' : '이 파일 삭제'}">${removed ? '↩' : '✕'}</button></span>`;
+  }).join(' ') + (editingRemoveFileIds.size ? '<div class="muted">✕ 표시한 파일은 저장할 때 삭제됩니다.</div>' : '');
+}
+
+$('#asg-existing-files').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act="toggle-remove"]');
+  if (!btn) return;
+  const id = btn.closest('.file-chip').dataset.fileId;
+  if (editingRemoveFileIds.has(id)) editingRemoveFileIds.delete(id); else editingRemoveFileIds.add(id);
+  const a = assignmentsCache.find((x) => x.id === editingAssignmentId);
+  renderExistingAsgFiles(a?.files ?? []);
+});
+
+function resetAssignmentForm() {
+  editingAssignmentId = null;
+  editingRemoveFileIds = new Set();
+  $('#asg-form-title').textContent = '과제 만들기';
+  $('#asg-title').value = ''; $('#asg-desc').value = ''; $('#asg-files').value = '';
+  $('#asg-resubmit').checked = true;
+  $('#btn-create-assignment').textContent = '과제 생성';
+  $('#btn-cancel-edit-assignment').classList.add('hidden');
+  $('#asg-existing-files').classList.add('hidden');
+  $('#asg-existing-files').innerHTML = '';
+  $('#asg-form').classList.remove('editing');
+}
+
+$('#btn-cancel-edit-assignment').addEventListener('click', resetAssignmentForm);
+
 $('#btn-create-assignment').addEventListener('click', async () => {
   const fd = new FormData();
   fd.set('title', $('#asg-title').value);
   fd.set('description', $('#asg-desc').value);
   fd.set('allowResubmit', $('#asg-resubmit').checked ? 'true' : 'false');
-  fd.set('subjectId', currentSubjectId);
   for (const f of $('#asg-files').files) fd.append('files', f);
   try {
-    await api('POST', '/api/teacher/assignments', fd);
-    $('#asg-title').value = ''; $('#asg-desc').value = ''; $('#asg-files').value = '';
-    toast('과제를 생성했습니다. "배부" 버튼으로 학생에게 공개하세요.');
+    if (editingAssignmentId) {
+      fd.set('removeFileIds', JSON.stringify([...editingRemoveFileIds]));
+      const a = assignmentsCache.find((x) => x.id === editingAssignmentId);
+      await api('PUT', `/api/teacher/assignments/${editingAssignmentId}`, fd);
+      resetAssignmentForm();
+      toast(a?.status === 'published' ? '과제를 수정했습니다. 학생 화면에 바로 반영됩니다.' : '과제를 수정했습니다.');
+    } else {
+      fd.set('subjectId', currentSubjectId);
+      await api('POST', '/api/teacher/assignments', fd);
+      resetAssignmentForm();
+      toast('과제를 생성했습니다. "배부" 버튼으로 학생에게 공개하세요.');
+    }
     await loadAssignments();
   } catch (err) { toast(err.message, 'warn'); }
 });

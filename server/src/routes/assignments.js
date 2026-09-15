@@ -86,6 +86,41 @@ export function assignmentRouters({ db, io }) {
     res.json(assignment);
   });
 
+  // 과제 수정 — 제목·설명·재제출 허용·과목 변경, 배부 파일 추가(files)/삭제(removeFileIds: JSON 배열 또는 쉼표 목록)
+  teacher.put('/:id', upload.array('files'), (req, res) => {
+    const a = db.data.assignments.find((x) => x.id === req.params.id);
+    if (!a) {
+      for (const f of req.files ?? []) fs.rmSync(f.path, { force: true });
+      return res.status(404).json({ error: '과제를 찾을 수 없습니다.' });
+    }
+    const { title, description, allowResubmit, subjectId, removeFileIds } = req.body ?? {};
+    if (title !== undefined && !String(title).trim()) {
+      for (const f of req.files ?? []) fs.rmSync(f.path, { force: true });
+      return res.status(400).json({ error: '과제 제목이 필요합니다.' });
+    }
+    if (title !== undefined) a.title = String(title).trim();
+    if (description !== undefined) a.description = String(description);
+    if (allowResubmit !== undefined) a.allowResubmit = allowResubmit !== 'false' && allowResubmit !== false;
+    if (subjectId !== undefined) a.subjectId = validSubjectId(db, subjectId);
+    let remove = [];
+    if (Array.isArray(removeFileIds)) remove = removeFileIds;
+    else if (typeof removeFileIds === 'string' && removeFileIds.trim()) {
+      try { remove = JSON.parse(removeFileIds); } catch { remove = removeFileIds.split(','); }
+    }
+    const removeSet = new Set((Array.isArray(remove) ? remove : []).map(String));
+    if (removeSet.size) {
+      for (const f of a.files.filter((x) => removeSet.has(x.fileId))) {
+        fs.rmSync(path.join(assignDir(a.id), f.storedName), { force: true });
+      }
+      a.files = a.files.filter((x) => !removeSet.has(x.fileId));
+    }
+    if (req.files?.length) a.files.push(...storeFiles(req.files, assignDir(a.id)));
+    a.updatedAt = Date.now();
+    db.scheduleFlush();
+    if (a.status !== 'draft') io.of('/student').emit('assignment:updated', { assignmentId: a.id, title: a.title });
+    res.json({ ...a, subjectName: subjectNameOf(db, a.subjectId) });
+  });
+
   // 과제 삭제 — 배부 파일과 제출물도 함께 삭제 (필요하면 zip을 먼저 내려받도록 UI에서 안내)
   teacher.delete('/:id', (req, res) => {
     const idx = db.data.assignments.findIndex((x) => x.id === req.params.id);

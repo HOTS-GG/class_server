@@ -142,3 +142,9 @@ details.rubric summary { cursor: pointer; font-size: 13px; color: var(--accent-t
 .progress-bar { height: 6px; background: var(--bg-hover); border-radius: 99px; overflow: hidden; margin-top: 6px; }
 .progress-bar > div { height: 100%; background: var(--clr-purple-text); transition: width .3s; }
 pre { background: var(--bg-0); padding: 10px; border-radius: var(--radius-sm); overflow-x: auto; }
+
+/* 과제 수정 폼 */
+#asg-form.editing { border-color: var(--clr-purple-text); }
+#asg-existing-files { margin: 8px 0; line-height: 2; }
+.file-chip.removed { text-decoration: line-through; opacity: .55; }
+.file-chip button.small { padding: 0 6px; line-height: 1.4; }

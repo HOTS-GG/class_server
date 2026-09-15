@@ -66,14 +66,16 @@
 
   <!-- 과제 -->
   <section id="tab-assignments" class="tab">
-    <h2>과제 만들기 <span id="asg-subject-label" class="muted"></span></h2>
-    <div class="card">
+    <h2><span id="asg-form-title">과제 만들기</span> <span id="asg-subject-label" class="muted"></span></h2>
+    <div class="card" id="asg-form">
       <input id="asg-title" type="text" placeholder="과제 제목">
       <textarea id="asg-desc" placeholder="설명 (선택)"></textarea>
+      <div id="asg-existing-files" class="hidden"></div>
       <div class="toolbar">
         <input id="asg-files" type="file" multiple>
         <label><input id="asg-resubmit" type="checkbox" checked> 재제출 허용</label>
         <button id="btn-create-assignment" class="primary">과제 생성</button>
+        <button id="btn-cancel-edit-assignment" class="hidden">취소</button>
       </div>
     </div>
     <h2>과제 목록</h2>
