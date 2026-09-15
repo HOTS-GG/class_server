@@ -1,4 +1,4 @@
-# 코드 서명용 자체 서명 인증서 만들기 (테스트·교내 배포용)
+﻿# 코드 서명용 자체 서명 인증서 만들기 (테스트·교내 배포용)
 #   powershell -ExecutionPolicy Bypass -File tools\make-signing-cert.ps1 [-Password "비밀번호"] [-Out "경로\codesign.pfx"]
 #
 # 주의: 자체 서명 인증서는 파일이 변조되지 않았음을 증명하지만, Windows SmartScreen 경고를 없애지는 못합니다.

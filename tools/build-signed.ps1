@@ -1,4 +1,4 @@
-# 코드 서명이 붙은 exe 빌드
+﻿# 코드 서명이 붙은 exe 빌드
 #   powershell -ExecutionPolicy Bypass -File tools\build-signed.ps1 -Cert "경로\codesign.pfx" -Password "비밀번호" [-Target teacher|student|all]
 # electron-builder는 WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD 환경변수를 읽어 signtool로 서명하고 타임스탬프를 붙입니다.
 param(
