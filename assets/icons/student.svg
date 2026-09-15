@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="720" viewBox="0 0 720 720">
+  <title>ClassServer Student</title>
+  <rect x="10" y="10" width="700" height="700" rx="150" fill="#06BA5B"/>
+  <g transform="translate(360 365) rotate(45)" fill="#FFFFFF">
+    <rect x="-62" y="-330" width="124" height="90" rx="28"/>
+    <rect x="-62" y="-218" width="124" height="330"/>
+    <polygon points="-62,134 62,134 0,262"/>
+  </g>
+</svg>

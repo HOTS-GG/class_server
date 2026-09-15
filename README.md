@@ -72,7 +72,7 @@ npm run build:student
 
 ### 앱 아이콘
 
-`assets/icons/teachericon.svg`, `studenticon.svg`(720px PNG 내장)가 원본입니다. 원본을 바꾼 뒤 `npm run make-icons` 를 실행하면 `teacher.ico`, `student.ico`(16~256px)와 `*-256.png`가 다시 만들어지고, electron-builder(`win.icon`)와 각 앱의 BrowserWindow가 이를 사용합니다.
+`assets/icons/teacher.svg`, `student.svg`(벡터)가 원본입니다. 원본을 바꾼 뒤 `npm run make-icons` 를 실행하면 Electron이 각 크기(16~256px)로 직접 렌더링해 `teacher.ico`, `student.ico`와 `*-256.png`를 다시 만듭니다(모서리 바깥은 투명). electron-builder(`win.icon`)와 각 앱의 BrowserWindow가 이 ico를 씁니다. `assets/icons/original/`은 처음 받은 PNG 내장 SVG(흰 배경)로, 참고용입니다.
 
 ### 코드 서명
 

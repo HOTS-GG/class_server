@@ -21,7 +21,7 @@
     "build:student": "electron-builder --config student-client/electron-builder.json",
     "build:signed": "powershell -ExecutionPolicy Bypass -File tools/build-signed.ps1",
     "make-cert": "powershell -ExecutionPolicy Bypass -File tools/make-signing-cert.ps1",
-    "make-icons": "powershell -ExecutionPolicy Bypass -File tools/make-icons.ps1"
+    "make-icons": "electron tools/make-icons.js"
   },
   "dependencies": {
     "archiver": "^7.0.1",
